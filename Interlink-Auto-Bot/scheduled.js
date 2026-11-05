@@ -4,6 +4,8 @@ const path = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const { atomicWrite, readJson } = require('./lib/storage');
 const { slotsFor, confirmed } = require('./lib/windows');
+const { failureDetails } = require('./lib/diagnostics');
+const { parseEligibility, responseShape } = require('./lib/eligibility');
 const root = path.join(__dirname, '.runtime');
 const log = (event, extra = {}) => console.log(JSON.stringify({ time: new Date().toISOString(), event, ...extra }));
 
@@ -20,31 +22,37 @@ async function executeWindow(slot, state, deps) {
   if (now() < slot.start) await sleep(slot.start - now());
   if (now() >= slot.end) { finish('FAILED', 'missed_window'); return; }
   let notEligible = false;
-  for (let attempt = 0; attempt < 6 && now() + 25000 < slot.end; attempt++) {
+  for (let attempt = 0; attempt < (slot.manual ? 1 : 6) && now() + 25000 < slot.end; attempt++) {
     if (!await ensureFresh()) { finish('FAILED', 'authentication_required'); return; }
+    let stage = 'eligibility';
     try {
       const api = client();
       const check = await api.get('/token/check-is-claimable');
-      if (check.data?.statusCode !== 200 || typeof check.data?.data?.isClaimable !== 'boolean') {
-        throw new Error('invalid_eligibility_response');
-      }
-      if (!check.data.data.isClaimable) {
+      let eligible;
+      try { eligible = parseEligibility(check); }
+      catch (error) { log('ELIGIBILITY_INVALID_RESPONSE', responseShape(check)); throw error; }
+      if (!eligible) {
         notEligible = true;
         // nextFrame units are undocumented: do not interpret or override them.
+        if (slot.manual) break;
         await sleep(Math.min(30000, Math.max(0, slot.end - now()))); continue;
       }
       notEligible = false;
+      stage = 'account_baseline';
       const before = await api.get('/auth/current-user-full?include=userInfo,token,isClaimable');
       if (before.data?.statusCode !== 200 || before.data?.data?.token?.lastClaimTime == null) {
         throw new Error('missing_verification_baseline');
       }
       const last = before.data.data.token.lastClaimTime;
+      stage = 'pre_claim_sequence';
       await api.get('/token/get-random-ads-mining-new', { params: { totalHhp: 1, lastTimeClaim: last } });
       await sleep(15000);
       if (now() + 10000 >= slot.end) break;
       // Durable intent BEFORE the non-idempotent POST. Never retry an ambiguous submission.
       state.submitted = true; persist();
+      stage = 'claim_submission';
       const response = await api.post('/token/claim-airdrop', '');
+      stage = 'claim_verification';
       const after = await api.get('/auth/current-user-full?include=userInfo,token,isClaimable');
       if (after.data?.statusCode !== 200 || !confirmed(response.data, last, after.data?.data?.token?.lastClaimTime)) {
         finish('FAILED', 'claim_unconfirmed'); return;
@@ -55,6 +63,7 @@ async function executeWindow(slot, state, deps) {
       } catch { log('POST_CLAIM_FOLLOWUP_FAILED', { key: slot.key }); }
       return;
     } catch (e) {
+      log('REQUEST_FAILED', { key: slot.key, ...failureDetails(e, stage) });
       if (state.submitted) { finish('FAILED', 'submission_outcome_unknown'); return; }
       const status = e.response?.status;
       if (status === 401 || status === 403 || status === 429) {
@@ -62,6 +71,7 @@ async function executeWindow(slot, state, deps) {
       }
       log('READ_ATTEMPT_FAILED', { key: slot.key, attempt: attempt + 1 });
       notEligible = false;
+      if (slot.manual) break;
       await sleep(Math.min(30000, Math.max(0, slot.end - now())));
     }
   }

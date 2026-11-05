@@ -15,10 +15,10 @@ function fake(options = {}) {
       get: async url => {
         reads++;
         if (options.offline) throw new Error('offline');
-        if (url.includes('check-is-claimable')) return { data: { statusCode: 200, data: { isClaimable: !options.notEligible } } };
-        return { data: { statusCode: 200, data: { token: { lastClaimTime: posts ? 200 : 100 } } } };
+        if (url.includes('check-is-claimable')) return { status: 200, data: { statusCode: 200, data: { isClaimable: !options.notEligible } } };
+        return { status: 200, data: { statusCode: 200, data: { token: { lastClaimTime: posts ? 200 : 100 } } } };
       },
-      post: async () => { posts++; if (options.ambiguous) throw new Error('timeout'); return { data: { statusCode: options.rejected ? 400 : 200 } }; }
+      post: async () => { posts++; if (options.ambiguous) throw new Error('timeout'); return { status: 200, data: { statusCode: options.rejected ? 400 : 200 } }; }
     }) };
   return { state, slot, deps, posts: () => posts, reads: () => reads };
 }

@@ -1,176 +1,236 @@
-# Android scheduling redesign
+# Interlink Scheduler — first-time Android installation
 
-Status: Node tests pass; Android companion source provided, **not built or tested on a phone** in this environment. No live Interlink requests were made. Review and complete the acceptance tests below before relying on unattended claims.
+This guide installs **version 1.3** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
-## Architecture review
+The system has two components on your phone:
 
-Reviewed local commit `966f6c0`, verified against GitHub HEAD on 2026-11-05. The old flow was Termux:Boot → crond → shell → `index.js --once`. It already enabled TLS verification, had two windows, and used application `statusCode` to check acceptance. Problems found:
+- **Termux** runs the Node.js bot and stores your credentials privately.
+- **Interlink Scheduler** is the companion APK with a teal clock icon. It schedules execution and provides **Test connection now** and **Claim once now** buttons. It is not the official Interlink app.
 
-- Startup could use an expired token before refresh, or fall back to interactive OTP in cron.
-- Token files were individually overwritten, allowing partial writes and mismatched rotated pairs.
-- Network/5xx claim POST retries could repeat a request already accepted by the server.
-- A mkdir lock survived SIGKILL/reboot and blocked all future executions.
-- No persistent per-window outcome prevented repeat submissions after restart.
-- Raw responses and account/proxy details appeared in logs. Missing `.gitignore` contradicted the old documentation.
-- A late request could cross a window deadline; eligibility polling did not correctly respect its stated delay policy.
-- Dependencies were unlocked. `proxies.txt` is already tracked; ignoring it does not untrack it.
+You do not need cron, Termux:Boot, Termux:API, a continuously running Node process, or a connected Mac after installation. Android background execution remains subject to battery restrictions and phone manufacturer policies. Do not force-stop either app.
 
-The existing device/version headers and auth, eligibility, pre-claim advertisement, claim and post-claim advertisement endpoints remain. Their undocumented semantics have not been independently established. Do not change the headers to impersonate other accounts/devices or bypass server controls.
+> **Already using the bot?** Follow the [existing-user note](#note-for-existing-users) instead of cloning again or logging in again. Keep all existing credential and device files.
 
-## Decision
+## Before you begin
 
-Use six one-shot `AlarmManager.setExactAndAllowWhileIdle()` RTC alarms, rearming the next alarm before dispatch. The alarm receiver starts a bounded, visible `dataSync` foreground service that holds a timeout-limited CPU wake lock and invokes Termux's supported `RUN_COMMAND` service with background execution enabled. Termux runs the locked shell wrapper and exits Node after both windows, no later than :34. The result callback releases the companion service early; its deadline also releases resources if Termux never responds.
+You need an Android 8 or newer phone, internet access, a supported Termux build with `RUN_COMMAND` support, and your Interlink login/passcode plus access to email OTP. Use a maintained Termux release; if you use add-ons, install them from a consistent signing source. Compatibility varies across Termux distributions and phone manufacturers.
 
-```mermaid
-flowchart TD
-  A[Android exact alarm at :26] --> B[Receiver rearms next local-time alarm]
-  B --> C[Bounded service and notification]
-  C --> D[Termux RUN_COMMAND]
-  D --> E[flock and execution deadline]
-  E --> F[Load credentials and check JWT expiration]
-  F --> G{Refresh needed?}
-  G -->|Yes| H[Refresh and atomically persist token pair]
-  G -->|No| I[Independent claim windows]
-  H --> I
-  I --> J[Private result ledger and JSON logs]
-  J --> K[Exit Node and release service resources]
-```
+Install Termux and open it once. Unless a step explicitly says otherwise, run commands **inside Termux on your phone**, not on the Mac. Copy commands without any terminal prompt such as `~ $`. If a previous paste left you at a `>` prompt, press **Ctrl+C** before continuing.
 
-No cron, Node, or companion service is required between the six daily runs. **Node remains sleeping between the two windows in a single run.** Eliminating that short wait would require a second wakeup only five minutes later, which cannot be relied on in Doze. Android documents a minimum nine-minute spacing for allow-while-idle alarms. A single alarm's brief temporary exemption does not keep an eight-minute execution or another app's network access alive. For the proposed mode, manually exempt **both Termux and the companion** from battery optimization, and test OEM background/autostart settings. A foreground service alone does not bypass Doze. These are reliability accommodations, not guarantees. [Android Doze documentation](https://developer.android.com/training/monitoring-device-state/doze-standby)
+## 1. Install the required packages
 
-Exact alarms need user-granted `SCHEDULE_EXACT_ALARM` access on supported Android versions; the app checks permission and rearms after grant. It deliberately does not use restricted `USE_EXACT_ALARM` or a fake alarm-clock UI. Exact alarms for user-requested actions can start foreground services, but cross-app Termux launch restrictions and OEM policy still apply. [Alarm scheduling](https://developer.android.com/develop/background-work/services/alarms), [foreground service restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)
-
-### Alternatives
-
-| Approach | Battery and timing | Decision |
-|---|---|---|
-| Cron | Idle daemon is small, but process survival and continuous wake locks are costly; no Android wake scheduling | Retain only as an optional fallback |
-| WorkManager | OS batches work efficiently; periodic minimum is 15 minutes; one-time initial delay is not an exact deadline | Unsuitable for :26/:31 claim windows |
-| Termux:API job scheduler | JobScheduler-backed, supports persisted jobs, but subject to deferral | Useful for flexible work, not this schedule |
-| Exact-alarm companion | No between-run daemon; six wakeups, at most 48 minutes/day of bounded wake-lock time | Selected to preserve existing Node business logic |
-| Fully native client | Removes Termux handoff and second app's lifecycle; requires porting authentication and API workflow | Better long-term control if device testing rejects the Termux bridge; still subject to Doze/force-stop |
-
-[WorkManager timing](https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work), [Termux job scheduler source](https://github.com/termux/termux-api-package/blob/master/scripts/termux-job-scheduler.in), [supported Termux integration](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent)
-
-### Phone lifecycle behavior
-
-| User/system action | Expected behavior and limits |
-|---|---|
-| Press Home | UI goes into background; scheduled alarms remain |
-| Swipe Termux from Recent Apps | Usually dismisses the activity; supported background command can start without opening a terminal. Some OEMs treat dismissal more aggressively; test the actual phone |
-| Android kills process for memory | Companion alarms can survive process death and start a future run. An in-progress run may be lost; durable submission markers prevent repeating an uncertain POST |
-| Force-stop Termux | Do not expect scheduled execution; manually reopen Termux before resuming |
-| Force-stop companion | Its alarms cannot be relied upon and may be canceled; reopen it and select Enable / repair schedule |
-| Reboot | Boot receiver rearms future alarms after normal unlock/credential-encrypted storage availability. No pre-unlock credential access. Missed slots are logged, not replayed |
-| Time or timezone change | Receiver recalculates future local times. Active Node run stops further requests when it detects a timezone or >5-second clock jump. Repeated local hour uses the same ledger key |
-
-Force-stop is explicitly different from swiping away an activity. Android 15 cancels pending intents when an app enters the stopped state. Reboot is not a promised escape from force-stop. [Android stopped-state behavior](https://developer.android.com/about/versions/15/behavior-changes-all)
-
-## Runtime behavior
-
-Local hours: **01, 05, 09, 13, 17, 21**. First window `[26:00,30:00)` includes the entire :29 minute; second `[31:00,34:00)` stops at :34:00. Late delivery uses only the remaining window. Calls outside those hours/minutes exit immediately.
-
-At startup:
-
-1. Load `credentials.json`, or fall back to legacy `token.txt` and `refresh_token.txt` only if the new file does not exist.
-2. Decode JWT `exp` locally. This checks lifetime, **not cryptographic authenticity**; the server remains authoritative.
-3. A valid token proceeds. Expired/missing/malformed tokens, or tokens within five minutes of expiry, trigger `POST /auth/token` with the refresh token.
-4. Verify the application success status and a usable, unexpired access token. Retain the old refresh token only if the server omits a replacement.
-5. Atomically write the pair to one `credentials.json` using a 0600 temporary file, fsync, rename and directory fsync. Persistence failure prevents continuation.
-6. Refresh failure records failure for unfinished windows and exits without OTP prompts. Use manual login to recover.
-
-This single-file pair prevents a crash between two individual token-file renames from mixing token generations. Legacy files remain private migration inputs; new rotations are saved to `credentials.json`. Once migrated, it is authoritative. Token storage is private plaintext, not encryption against a rooted phone. Server-side refresh rotation followed by a crash before persistence can still require manual reauthentication; no local write strategy removes that server/client transaction gap.
-
-Each window checks eligibility at most six times, with 30-second backoff; no rate-limit or authentication rejection is retried. Network/read failures are bounded. Every HTTP request has a 10-second timeout, clamped to the window deadline for claim work. No undocumented `nextFrame` units are assumed. A true eligibility result is required for submission. Pre-claim sequence retains the existing advertisement GET and 15-second pause.
-
-A durable `submitted` marker is saved **before** the claim POST. Only one POST is permitted per window, even if the server rejects it or the result is ambiguous. This conservative policy can miss a legitimate retry but avoids duplicate non-idempotent requests. Success requires application `statusCode: 200` and `current-user-full.token.lastClaimTime` advancing from the pre-claim baseline. This is stronger than HTTP 200 alone, but the timestamp interpretation still needs live validation; concurrent claims from another client can confound attribution. Unknown outcomes are failures, never invented successes.
-
-Results are `WINDOW_1_SUCCESS`, `WINDOW_1_NOT_ELIGIBLE`, `WINDOW_1_FAILED`, and corresponding `WINDOW_2_*`, with separate reason fields. `FAILED` with `submission_outcome_unknown` means the server **may** have accepted the claim. Do not clear the ledger to retry it. Maximum is 12 successes/day, subject to actual execution and server eligibility.
-
-`flock` prevents overlapping shell runs and releases on process death. All production launches must use `run-scheduled.sh`; do not launch `scheduled.js` directly. Terminal authentication should happen with scheduling disabled and no active run. JSON-line logs are under `logs/`, and the private ledger is `.runtime/state.json`. Corrupt state fails closed. The ledger is not automatically pruned, preserving duplicate suppression when clocks move backward. Review/archive logs periodically if storage is limited.
-
-## Files
-
-```text
-Interlink-Auto-Bot/
-  index.js                  manual login, API headers, startup refresh and token persistence
-  scheduled.js              bounded two-window runner, durable outcomes and JSON logs
-  lib/storage.js            atomic private writes; fail-closed JSON reads
-  lib/windows.js            local schedule and conservative confirmation predicate
-  run-scheduled.sh           kernel lock, timeout and private log redirection
-  setup-schedule.sh          optional legacy cron installer
-  package.json              commands and dependencies
-  package-lock.json         resolved dependency versions
-  test/                     mocked auth, state and window tests; no real claims
-  android-companion/
-    settings.gradle.kts     build repositories and app registration
-    build.gradle.kts        pinned Android/Kotlin plugins
-    app/build.gradle.kts    SDK 35, minimum Android 8, Java 17
-    app/src/main/AndroidManifest.xml
-    app/src/main/java/ai/interlink/scheduler/Scheduler.kt
-                            UI, alarm/recovery receivers, bounded service and callback
-  .gitignore                credentials, runtime state, logs and build exclusions
-  README-mobile.md          this review, installation and testing guide
-```
-
-## Installation and migration
-
-### Review and publish from the Mac
-
-No commit or push was performed by this implementation task. Review the changes, then publish your chosen branch:
+Run one command at a time:
 
 ```sh
-cd /Users/harikorivi/Downloads/Helping_hands
- git diff --check
- git diff -- Interlink-Auto-Bot
-cd Interlink-Auto-Bot
-npm ci --ignore-scripts
-npm test
-npm audit
-cd ..
-git add Interlink-Auto-Bot/index.js Interlink-Auto-Bot/scheduled.js Interlink-Auto-Bot/lib Interlink-Auto-Bot/test Interlink-Auto-Bot/android-companion Interlink-Auto-Bot/.gitignore Interlink-Auto-Bot/package.json Interlink-Auto-Bot/package-lock.json Interlink-Auto-Bot/run-scheduled.sh Interlink-Auto-Bot/README.md Interlink-Auto-Bot/README-mobile.md
-git diff --cached --stat
-git commit -m "Add Android alarm scheduler and secure bounded claim execution"
-git push origin HEAD
+pkg update
 ```
-
-Do not use `git add .` for credential-bearing workspaces. `proxies.txt` was already tracked before these changes: keep any real proxy credentials out of that file, or explicitly untrack it before adding credentials. No credential file contents were inspected during this task.
-
-### Build the companion on the Mac
-
-Install Android Studio/SDK 35 and JDK 17. Open `android-companion` as a Gradle project. Use Gradle **8.9**, compatible with AGP **8.7.3**. This source does not bundle a Gradle wrapper binary. With Gradle 8.9 installed:
-
-```sh
-cd /Users/harikorivi/Downloads/Helping_hands/Interlink-Auto-Bot/android-companion
-gradle :app:assembleDebug :app:lintDebug
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
-
-For long-term installation, create a privately stored release signing key and signed APK using Android Studio; retain that key for upgrades. This is a personal sideload implementation, not a claim of Play Store eligibility. [Build tool compatibility](https://developer.android.com/build/releases/agp-8-7-0-release-notes)
-
-### Configure Termux
-
-Use a supported Termux build with the documented `RUN_COMMAND` API (introduced in 0.95; callbacks require at least 0.109; use a maintained release). Install Termux and its add-ons from a consistent signing source if using add-ons. The bridge does not need Termux:API, Tasker, or Termux:Boot. Google Play and other Termux variants may differ; validate the installed build, Android version and OEM before declaring compatibility.
 
 ```sh
 pkg install nodejs-lts git util-linux coreutils
-cd ~/Helping_hands
-git pull --ff-only
-cd Interlink-Auto-Bot
-npm ci --ignore-scripts
-chmod 700 run-scheduled.sh
-mkdir -p ~/.termux
 ```
 
-Edit `~/.termux/termux.properties` to contain a single active setting:
+The bot requires Node.js 22 or newer. You can check your installed version:
+
+```sh
+node --version
+```
+
+## 2. Download the project
+
+Use this exact location because the companion APK expects it:
+
+```sh
+cd ~
+```
+
+```sh
+git clone https://github.com/harikorivi/Helping_hands.git
+```
+
+```sh
+cd ~/Helping_hands/Interlink-Auto-Bot
+```
+
+If the repository already exists, use the existing-user note below. Do not delete an existing checkout to repeat installation.
+
+## 3. Run the Termux setup
+
+```sh
+bash setup-termux.sh
+```
+
+Wait until it prints **Setup complete**. If it fails, resolve the displayed error before continuing.
+
+The setup command:
+
+- Installs the locked Node.js dependencies and runs mocked tests (no real claims).
+- Creates `~/.termux/termux.properties` if missing, or backs it up if it exists.
+- Preserves other settings and ensures one active `allow-external-apps=true` line.
+- Reloads Termux settings and prepares the execution scripts.
+- Preserves credentials and prevents setup while a bot execution holds the lock.
+
+No nano, vi, or manual file editing is needed. To inspect the resulting setting:
+
+```sh
+cat ~/.termux/termux.properties
+```
+
+You should see an uncommented line:
 
 ```properties
 allow-external-apps=true
 ```
 
-Then run `termux-reload-settings`. Only grant Termux command permission to apps you trust: it allows execution in the Termux environment. The fixed companion path is `~/Helping_hands/Interlink-Auto-Bot`; change the `work` path in `Scheduler.kt` and rebuild if your checkout differs.
+This allows authorized apps to request Termux commands. Grant that permission only to apps you trust.
 
-Disable the old tagged cron entry while preserving other jobs:
+## 4. Log in for the first time
+
+```sh
+node index.js --login
+```
+
+Follow the prompts for login ID, passcode and email OTP. Passcode and OTP input are hidden, so typed characters will not appear. Press Enter after each answer.
+
+Successful authentication stores the access and refresh tokens together in private `credentials.json`, with the device identity in `device.txt`. Future runs check JWT expiration and automatically refresh expired or soon-to-expire tokens. A rotated refresh token is saved atomically with the access token before execution continues. Unattended execution never prompts for OTP.
+
+Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or `device.txt`. Keep the project in Termux's private home, not shared Android storage. Never disable TLS certificate verification.
+
+## 5. Install the companion APK
+
+On your phone, open [Interlink-Scheduler-1.3.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.3.apk) and download it. The same file is in the repository at:
+
+```text
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.3.apk
+```
+
+Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
+
+Find **Interlink Scheduler** by its teal clock/check-mark icon and open it. This is a personal debug-signed APK, not a Play Store release. No Mac build is needed to use the supplied APK.
+
+## 6. Complete the app's four setup sections
+
+Tap each button **once**. Return to the app after changing an Android setting; status updates automatically. If a setting already shows **Allowed**, you do not need to grant it again.
+
+| Section | App to configure | What to do |
+|---|---|---|
+| **1. Allow Termux commands** | **Interlink Scheduler** | Allow **Run commands in Termux environment**. If the prompt does not reopen, use Scheduler App info → Permissions → Additional permissions. |
+| **2. Allow scheduled alarms** | **Interlink Scheduler** | Open **Scheduler alarm settings** and allow **Alarms & reminders**. Android versions before 12 do not need this special permission. |
+| **3. Allow both apps in background** | **Interlink Scheduler AND Termux** | Use each named battery button. Select Battery / App battery usage → Unrestricted / No restrictions / Allow background activity, as offered by your phone. |
+| **4. Show run notifications** | **Interlink Scheduler** | Open **Scheduler notifications** and allow notifications so active executions are visible. |
+
+For a separate battery-optimization list, tap **Open battery optimization list**, select **All apps** if needed, and choose **Don't optimize** for **both Interlink Scheduler and Termux**. Do not select the official Interlink app for these settings.
+
+Some phones also require Auto-start permission or an additional background-activity setting. The app reports Android's optimization exemption status but cannot verify every manufacturer's settings. Settings links open the named app's App info with guidance; if a shortcut is unavailable, navigate through Android Settings → Apps manually.
+
+## 7. Test the installation immediately
+
+In the app's **Try it now** card, tap:
+
+**Test connection now • no claim**
+
+Wait for the result in that card, allowing up to two minutes. The test starts Termux, validates/refreshes authentication, and reads account and eligibility information. It does **not** submit a claim. A successful test confirms the foreground execution path; it does not yet prove alarm delivery while the phone is locked.
+
+If the test fails, inspect the private log in Termux:
+
+```sh
+cd ~/Helping_hands/Interlink-Auto-Bot
+```
+
+```sh
+tail -n 40 "logs/on-demand-$(date +%Y-%m-%d).log"
+```
+
+Logs report safe metadata such as request stage, HTTP status and field types. Do not share raw API response bodies or credential files.
+
+> Manual actions reserve **:24 through :33** during hours **01, 05, 09, 13, 17 and 21** for automatic execution, even when the schedule is paused. If the app asks you to defer, try after minute 34. An existing run also prevents overlapping execution.
+
+## 8. Enable automatic scheduling
+
+Tap **Enable schedule**. Confirm that the top card says **Schedule is enabled** and shows the expected **Next run** in your phone's local time.
+
+| Run starts | Check the log after |
+|---|---|
+| 01:26 AM | 01:35 AM |
+| 05:26 AM | 05:35 AM |
+| 09:26 AM | 09:35 AM |
+| 01:26 PM | 01:35 PM |
+| 05:26 PM | 05:35 PM |
+| 09:26 PM | 09:35 PM |
+
+Each run has two independent windows: **:26:00 through :29:59**, and **:31:00 through :33:59**. It attempts at most one submission per window, only if the server reports eligibility. Node exits after the windows; no Node process or companion execution service is required between the six daily runs. Node may sleep between the two windows within a run.
+
+Press **Home** and turn off the screen. The app screens do not need to remain open. Swiping Recent Apps may work, but test it on your phone because manufacturer behavior varies. **Do not Force stop Termux or Interlink Scheduler.** Reopen the apps and repair the schedule after a force-stop. Reboot recovery rearms future alarms after normal unlock; missed windows are not replayed.
+
+After the next run finishes, check:
+
+```sh
+cd ~/Helping_hands/Interlink-Auto-Bot
+```
+
+```sh
+tail -n 60 "logs/claim-$(date +%Y-%m-%d).log"
+```
+
+Look for both `WINDOW_1_*` and `WINDOW_2_*` results:
+
+- `SUCCESS`: API acceptance and an advancing claim timestamp were observed.
+- `NOT_ELIGIBLE`: the server did not report eligibility during the checks.
+- `FAILED`: inspect the reason. An uncertain submission may have been accepted by the server and must not be blindly retried.
+
+The scheduled maximum is 12 successful claims per day, subject to eligibility and actual execution. The `logs` directory is created when an execution wrapper starts, not by the tests. An app message saying a command was sent is not proof that a claim succeeded. Old pause events in Recent activity are history; the top card shows current status.
+
+## Optional: submit one real claim now
+
+Tap **Claim once now** and read the confirmation dialog. Confirm only if you intend to submit a real claim. The action checks eligibility, submits at most once and verifies the result, without waiting for a second window. It can affect eligibility for later scheduled runs.
+
+Manual claims have a one-minute cooldown and share the bot's execution lock. An uncertain submitted manual claim blocks further manual claims pending review of the actual server outcome. Do not delete `.runtime/manual.json` to bypass that protection. Separate manual claims are not included in the scheduled maximum of 12.
+
+For terminal use, `bash run-on-demand.sh test` performs the connection test. `bash run-on-demand.sh claim` requests a real claim without a confirmation prompt; use the app's confirmed button when learning the system.
+
+## Troubleshooting
+
+| Symptom | What to check |
+|---|---|
+| Permission button does not show another prompt | It may already be allowed, or Android may suppress repeated prompts. Open Scheduler App info → Permissions. Tap once; double-tapping is unnecessary. |
+| Token refresh fails | Check connectivity and the log. If reauthentication is required, pause scheduling, wait for the active run to finish, then run `node index.js --login`. |
+| Unexpected eligibility response | The current code accepts HTTP 2xx with an explicit nested eligibility boolean; missing application status is allowed, but explicit errors/malformed fields are rejected. Share the safe `TEST_INVALID_RESPONSE` field-type diagnostics, not raw account data. |
+| `missed_window` | The run started after that window closed. A manually started late run does not prove an Android alarm delay. |
+| No scheduled log after minute 35 | Verify the companion's next alarm, permissions, both battery settings and the fixed checkout path. Inspect Recent activity for dispatch failure. |
+| Command/file missing | Confirm `~/Helping_hands/Interlink-Auto-Bot/run-on-demand.sh` exists and run setup again. Use the APK and source from this same repository version. |
+| Another run is active | Wait for it to finish. Do not remove the lock file to force overlap. |
+| Schedule stops after permission changes | Regrant the required permission, reopen the companion and tap **Repair next scheduled run**. |
+
+## Note for existing users
+
+You do **not** need to clone again, delete tokens, or log in again if your existing credentials can authenticate or refresh. `credentials.json` takes precedence once present; otherwise legacy `token.txt` and `refresh_token.txt` are read with the existing `device.txt`.
+
+1. Pause future runs in the companion and let any active execution finish.
+2. Update the existing checkout and run setup:
+
+```sh
+cd ~/Helping_hands
+```
+
+```sh
+git pull --ff-only
+```
+
+```sh
+cd Interlink-Auto-Bot
+```
+
+```sh
+bash setup-termux.sh
+```
+
+If Git reports local changes or conflicts, stop and preserve those changes before resolving them. Do not use a hard reset or delete the checkout: it may contain your credentials. Earlier manually copied fixes can cause such conflicts.
+
+3. Install the current repository APK over the old app using **Update**, without uninstalling first. Updates require a matching signing key; if Android reports a signature mismatch, resolve that before proceeding.
+4. Run **Test connection now • no claim**, then enable/repair the schedule. Only reauthenticate if your stored credentials cannot refresh.
+
+### Only if migrating from the old cron setup
+
+Remove the tagged Interlink entry while preserving unrelated jobs:
 
 ```sh
 if crontab -l > "$TMPDIR/interlink-crontab-before" 2>/dev/null; then
@@ -178,58 +238,34 @@ if crontab -l > "$TMPDIR/interlink-crontab-before" 2>/dev/null; then
 fi
 ```
 
-Remove the old Interlink-only `crond` startup command from the relevant `~/.termux/boot/` script. If crond serves no other jobs, stop it with `pkill -x crond`. Do not disable unrelated cron jobs or boot scripts. Do not reinstall `setup-schedule.sh` while using the companion.
-
-Authenticate manually with the companion disabled and no active run:
-
 ```sh
-cd ~/Helping_hands/Interlink-Auto-Bot
-node index.js --login
-npm test
+crontab -l
 ```
 
-Passcode and OTP input are hidden. Manual login saves the pair atomically; future executions refresh automatically. Keep Termux data inside its private home, not shared Android storage. Never set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+If an untagged Interlink entry remains, identify its exact line before removing it. Do not enable both cron and the companion for this bot.
 
-Open **Interlink Scheduler**. Grant command execution and notification permissions, grant Alarms & reminders access, then manually exempt both apps under Battery settings. Select **Enable / repair schedule** and verify the next local-time alarm. Keep notifications enabled so a bounded run is visible. OEM autostart settings may also be required. Open Termux and the companion at least once after installation. No terminal session needs to remain open between runs.
+Find old cron startup scripts:
 
-## Testing and acceptance
+```sh
+grep -n 'crond' ~/.termux/boot/* 2>/dev/null
+```
 
-Automated tests use fake time and mocked HTTP; they never call Interlink. Local verification used Node 26.5.0 (the user's reported 26.13.0 was not available here). Dependency installation on 2026-11-05 reported zero known vulnerabilities; this is not a permanent security guarantee.
+Use `cat` with the reported filename to inspect it. If a script contains only this bot's cron startup and no other jobs need cron, move that script out of `~/.termux/boot/` into a backup directory and stop crond with `pkill -x crond`. Preserve unrelated startup commands and keep cron running if other jobs use it. Do not run `setup-schedule.sh` for the Android companion installation.
 
-| Test | Procedure | Acceptance |
-|---|---|---|
-| First window | Mock suite, then observe one real scheduled run | At most one POST, success only with verified advancement |
-| Second window | Observe the same execution across :31 | Independent second result; first success does not exit early |
-| Expired token | Mock expired JWT | Refresh precedes any reward request |
-| Refresh rotation | Mock replacement refresh token and persistence failure | Pair saved together; failure stops execution |
-| No refresh token / rejection | Mock missing/invalid refresh | Both unfinished windows fail, no OTP prompt |
-| Screen locked / Doze | Leave unplugged/locked; optionally `adb shell dumpsys deviceidle force-idle` before a scheduled alarm | Observe dispatch and both results, then `adb shell dumpsys deviceidle unforce` |
-| Recent Apps dismissed | Swipe Termux and companion away before a real alarm | Alarm can dispatch without opening terminal UI; document OEM failures |
-| Reboot | Reboot, unlock, inspect companion next alarm | Future schedule restored; no replay of missed claims |
-| Network unavailable | Disable network during a run | Bounded read retries; uncertain POST is never repeated |
-| Duplicate execution | Start wrapper twice during a slot; run once again after completion | Kernel lock blocks concurrency; ledger prevents repeat POST |
-| Process death | Kill a test execution after submission marker | Restart marks unknown outcome failed, no retry |
-| Missed schedule | Delay delivery past :34 or reboot over a slot | Missed event logged, no catch-up API calls |
-| Time/timezone | Change timezone before alarm and during a run | Future local alarm recalculated; old run stops new requests |
-| Permission revocation | Revoke exact-alarm / Termux permission | Fail visibly; regrant and Enable / repair to recover |
-| Force-stop | Force-stop each app separately | Do not expect execution; manually reopen and repair |
-| Shutdown | Inspect after :34 and between runs | No Node process or companion execution service; no held companion wake lock |
+## Building the APK from source (maintainers)
 
-Inspect `adb shell dumpsys alarm` for package `ai.interlink.scheduler`; inspect `adb shell dumpsys power` for wake locks. Companion events distinguish dispatch from completed commands. Inspect private `logs/claim-YYYY-MM-DD.log` and `.runtime/state.json` in Termux for actual claim outcomes. Do not share unredacted token files or full account responses.
+New users can install the supplied APK; building is optional. The source uses SDK 35, JDK 17, AGP 8.7.3 and Kotlin 2.0.21. Gradle 8.11.1 is the locally verified build version. Install those tools or use your existing Android toolchain; this repository does not bundle a Gradle wrapper.
 
-Android compilation/lint, callback delivery, reboot, locked-screen, OEM swipe behavior, and the live API confirmation contract remain **unverified**. Do not infer success from the companion's dispatch message. A frozen/killed process cannot write a final result at that moment; the companion detects an overdue future schedule on recovery and an existing submission marker protects later restarts.
+From the repository root on the build machine:
 
-## Final comparison
+```sh
+cd Interlink-Auto-Bot/android-companion
+```
 
-| Criteria | Existing cron | Proposed Android companion |
-|---|---|---|
-| Battery consumption | Small idle daemon, potentially continuous wake-lock workaround | Six alarms; bounded service and wake lock, up to 48 min/day; real savings require measurement |
-| Background reliability | Depends on surviving Termux/daemon | OS holds future alarms; Termux handoff and OEM restrictions remain |
-| Exact scheduling | Minute cron tick only while CPU/process available | Exact-alarm access, still subject to OS restrictions and delivery delays |
-| Termux UI closed | May continue if process survives | Background RUN_COMMAND can start without a terminal UI |
-| Force-stop behavior | No reliable execution | No reliable execution; reopen/repair required |
-| Reboot recovery | Termux:Boot must start daemon | Companion boot receiver rearms after unlock |
-| Implementation complexity | Low | Higher: Android app, permissions, service, callback, Node ledger |
-| Maintenance | Shell/Node/cron | Android target/build/permissions plus Node dependencies and API contracts |
+```sh
+gradle --no-daemon :app:assembleDebug :app:lintDebug
+```
 
-A native API client would reduce integration failure points if Termux dispatch fails on the target phone. It would still need an honest user-visible background-execution design and could not promise execution after force-stop.
+The output is `app/build/outputs/apk/debug/app-debug.apk`. Verify its signature with the SDK's `apksigner` before distributing it. Keep a consistent private signing key for updates; never commit that key. The published personal build is debug-signed. Android UI and settings navigation have been inspected in an emulator; end-to-end background claims on the user's physical phone still require the acceptance checks.
+
+See [ANDROID-ARCHITECTURE.md](ANDROID-ARCHITECTURE.md) for the architecture review, security model, file responsibilities, alternatives, and testing matrix.

@@ -68,21 +68,25 @@ class RunService : Service() {
     private var running = false
     override fun onBind(i: Intent?) = null
     override fun onStartCommand(i: Intent?, flags: Int, startId: Int): Int {
-        if (running) return START_NOT_STICKY
+        if (running) { Schedule.record(this,"EXECUTION_BUSY"); return START_NOT_STICKY }
         val scheduled = i?.getLongExtra("scheduled", 0) ?: 0
-        val remaining = scheduled + 480_000 - System.currentTimeMillis()
+        val mode = i?.getStringExtra("mode")?.takeIf { it == "test" || it == "claim" } ?: "scheduled"
+        val remaining = scheduled + (if (mode == "scheduled") 480_000 else 120_000) - System.currentTimeMillis()
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(Schedule.CHANNEL,"Scheduled claims",NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this,0,Intent(this, MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
         startForeground(1, Notification.Builder(this,Schedule.CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_popup_sync).setContentTitle("Interlink scheduled execution")
-            .setContentText("Two claim windows; stops by minute 34").setContentIntent(open).build())
+            .setSmallIcon(android.R.drawable.ic_popup_sync).setContentTitle(if (mode == "test") "Testing Termux connection" else if (mode == "claim") "Checking one eligible claim" else "Interlink scheduled execution")
+            .setContentText(if (mode == "scheduled") "Two claim windows; stops by minute 34" else "On-demand action; stops within two minutes").setContentIntent(open).build())
         if (remaining !in 1..480_000) { stopSelf(); return START_NOT_STICKY }
         running = true
-        Schedule.prefs(this).edit().putLong("active",scheduled).commit()
+        Schedule.prefs(this).edit().putLong("active",scheduled).putString("activeMode",mode).commit()
         lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Interlink:execution")
         lock!!.acquire(remaining)
-        handler.postDelayed({ Schedule.record(this,"EXECUTION_DEADLINE"); stopSelf() },remaining)
+        handler.postDelayed({
+            if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Timed out. Check the Termux on-demand log; a submitted claim may have an unknown outcome.").commit()
+            Schedule.record(this,"EXECUTION_DEADLINE"); stopSelf()
+        },remaining)
         val base = "/data/data/com.termux/files"
         val work = "$base/home/Helping_hands/Interlink-Auto-Bot"
         val result = PendingIntent.getBroadcast(this,2,
@@ -90,20 +94,24 @@ class RunService : Service() {
             PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_MUTABLE)
         val command = Intent("com.termux.RUN_COMMAND").setClassName("com.termux","com.termux.app.RunCommandService")
             .putExtra("com.termux.RUN_COMMAND_PATH","$base/usr/bin/bash")
-            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS",arrayOf("$work/run-scheduled.sh"))
+            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS",if (mode == "scheduled") arrayOf("$work/run-scheduled.sh") else arrayOf("$work/run-on-demand.sh",mode))
             .putExtra("com.termux.RUN_COMMAND_WORKDIR",work)
             .putExtra("com.termux.RUN_COMMAND_BACKGROUND",true)
             .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT",result)
         try {
             if (startService(command) == null) throw IllegalStateException()
+            if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Running… waiting for Termux to finish.").commit()
             Schedule.record(this,"TERMUX_DISPATCHED; not a claim result")
-        } catch (_: RuntimeException) { Schedule.record(this,"TERMUX_DISPATCH_FAILED; check permission and battery settings"); stopSelf() }
+        } catch (_: RuntimeException) {
+            if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Could not start Termux. Check command permission and setup.").commit()
+            Schedule.record(this,"TERMUX_DISPATCH_FAILED; check permission and battery settings"); stopSelf()
+        }
         return START_NOT_STICKY
     }
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         if (lock?.isHeld == true) lock?.release()
-        Schedule.prefs(this).edit().remove("active").commit()
+        Schedule.prefs(this).edit().remove("active").remove("activeMode").commit()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -114,46 +122,27 @@ class ResultReceiver : BroadcastReceiver() {
         if (i.getLongExtra("scheduled",-1) != Schedule.prefs(c).getLong("active",0)) return
         val result = i.getBundleExtra("result")
         val exit = if (result?.containsKey("exitCode") == true) result.getInt("exitCode") else -1
+        val mode = Schedule.prefs(c).getString("activeMode","scheduled")
+        if (mode != "scheduled") {
+            val message = when (exit) {
+                0 -> if (mode == "test") "Connection test passed. Authentication and API reads worked. No claim was submitted." else "One claim confirmed by the API and updated claim timestamp."
+                10 -> "Server reports not eligible. No claim submitted."
+                11 -> "Authentication failed or device credentials are missing. Check the private log; manual login may be required."
+                12 -> "A request failed. Check the on-demand log for the request stage and HTTP status."
+                13 -> "The API response was not in the expected format. Check the on-demand log."
+                14 -> "Another bot run is active. Wait for it to finish."
+                20 -> "Too close to a scheduled window or its deadline. Let the scheduled run finish first."
+                21 -> "Claim outcome could not be confirmed. Do not retry; review the on-demand log. Further manual claims are blocked until the outcome is resolved."
+                22 -> "Please wait at least one minute between manual claim attempts."
+                23 -> "This scheduled claim window was already attempted. No duplicate claim submitted."
+                124, 137 -> "Execution timed out. Check the log; any submitted claim may have an unknown outcome."
+                126, 127 -> "Bot files or commands are missing. Update the Termux project, including run-on-demand.sh and on-demand.js."
+                else -> "Termux returned exit $exit. Update the bot files and inspect the private on-demand log."
+            }
+            Schedule.prefs(c).edit().putString("manualResult",message).commit()
+        }
         // Never copy stdout/stderr, which may include account information.
         Schedule.record(c,"TERMUX_COMPLETED exit=$exit; see private Node ledger for window results")
         c.stopService(Intent(c,RunService::class.java))
-    }
-}
-
-class MainActivity : Activity() {
-    private lateinit var status: TextView
-    private fun button(layout: LinearLayout, title: String, action: () -> Unit) {
-        layout.addView(Button(this).apply { text = title; setOnClickListener { action(); refresh() } })
-    }
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,24,24,24) }
-        layout.addView(TextView(this).apply { text = "Six local-time runs: 01,05,09,13,17,21 at :26. Requires Termux at the documented path. Allow exact alarms, Termux commands and notifications. For Doze execution, exempt BOTH apps from battery optimization. No force-stop recovery is promised." })
-        button(layout,"Grant commands / notifications") {
-            val permissions = mutableListOf("com.termux.permission.RUN_COMMAND")
-            if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-            requestPermissions(permissions.toTypedArray(),1)
-        }
-        button(layout,"Alarms and reminders access") {
-            if (Build.VERSION.SDK_INT >= 31) startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName")))
-        }
-        button(layout,"Battery settings (both apps)") { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-        button(layout,"Enable / repair schedule") {
-            if (Schedule.allowed(this) && checkSelfPermission("com.termux.permission.RUN_COMMAND") == PackageManager.PERMISSION_GRANTED) {
-                Schedule.prefs(this).edit().putBoolean("enabled",true).commit(); Schedule.recover(this)
-            } else Schedule.record(this,"GRANT_PERMISSIONS_FIRST")
-        }
-        button(layout,"Disable future runs") {
-            Schedule.prefs(this).edit().putBoolean("enabled",false).remove("next").commit()
-            Schedule.manager(this).cancel(Schedule.pending(this))
-            Schedule.record(this,"DISABLED; current run may finish")
-        }
-        status = TextView(this); layout.addView(status)
-        setContentView(ScrollView(this).apply { addView(layout) })
-    }
-    override fun onResume() { super.onResume(); refresh() }
-    private fun refresh() {
-        val p = Schedule.prefs(this)
-        status.text = "Enabled: ${p.getBoolean("enabled",false)}\nExact access: ${Schedule.allowed(this)}\nNext: ${p.getLong("next",0).let { if (it == 0L) "none" else Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).toString() }}\n${p.getString("events","")}"
     }
 }
