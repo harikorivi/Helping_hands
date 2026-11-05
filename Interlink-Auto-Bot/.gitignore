@@ -1,0 +1,15 @@
+node_modules/
+token.txt
+refresh_token.txt
+device.txt
+credentials.json
+proxies.txt
+*.tmp
+.runtime/
+logs/
+.scheduled-claim.lock
+android-companion/.gradle/
+android-companion/local.properties
+**/build/
+*.jks
+*.keystore

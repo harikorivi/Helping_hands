@@ -1,9 +1,10 @@
 const axios = require('axios');
+const { atomicWrite, readJson } = require('./lib/storage');
+process.umask(0o077);
+const CREDENTIALS = require('path').join(__dirname, 'credentials.json');
 const fs = require('fs');
 const path = require('path');
-const moment = require('moment');
 const readline = require('readline');
-const { clear } = require('console');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const https = require('https');
@@ -15,43 +16,37 @@ const REFRESH_TOKEN_FILE  = path.join(__dirname, 'refresh_token.txt');
 const DEVICE_FILE_PATH    = path.join(__dirname, 'device.txt');
 const PROXIES_FILE_PATH   = path.join(__dirname, 'proxies.txt');
 const APP_VERSION         = '5.0.0';
-const CLAIM_INTERVAL_MS   = 4 * 60 * 60 * 1000;
 const REFRESH_BUFFER_MS   = 5 * 60 * 1000;
-const ONCE_MODE = process.argv.includes('--once');
-const WINDOW_MS = 8 * 60 * 1000; // Maximum runtime for a one-shot claim window
 
-const colors = {
-  green: '\x1b[32m', yellow: '\x1b[33m', red: '\x1b[31m',
-  white: '\x1b[37m', cyan:   '\x1b[36m', reset: '\x1b[0m', bold: '\x1b[1m'
-};
-const logger = {
-  info:    (m) => console.log(`${colors.green}[✓] ${m}${colors.reset}`),
-  warn:    (m) => console.log(`${colors.yellow}[⚠] ${m}${colors.reset}`),
-  error:   (m) => console.log(`${colors.red}[✗] ${m}${colors.reset}`),
-  success: (m) => console.log(`${colors.green}[✅] ${m}${colors.reset}`),
-  loading: (m) => console.log(`${colors.cyan}[⟳] ${m}${colors.reset}`),
-  step:    (m) => console.log(`${colors.white}[➤] ${m}${colors.reset}`),
-  banner: () => {
-    console.log(`${colors.cyan}${colors.bold}`);
-    console.log(`---------------------------------------------`);
-    console.log(`  Interlink Auto Bot - Airdrop Insiders`);
-    console.log(`---------------------------------------------${colors.reset}\n`);
-  }
-};
+const logger = Object.fromEntries(['info','warn','error','success','loading','step'].map(level => [level,
+  message => console.log(JSON.stringify({ time: new Date().toISOString(), level, event: 'AUTH', message }))]));
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const promptInput = (q) => new Promise(res =>
-  rl.question(`${colors.white}${q}${colors.reset}`, a => res(a.trim()))
-);
+let hiddenInput = false;
+const output = new (require('node:stream').Writable)({ write(chunk, encoding, callback) {
+  if (!hiddenInput) process.stdout.write(chunk, encoding);
+  callback();
+}});
+const rl = require.main === module ? readline.createInterface({ input: process.stdin, output, terminal: process.stdin.isTTY }) : null;
+const promptInput = (q, hidden = false) => new Promise(resolve => {
+  process.stdout.write(q); hiddenInput = hidden;
+  rl.question('', answer => { hiddenInput = false; if (hidden) process.stdout.write('\n'); resolve(answer.trim()); });
+});
 
-const save = (file, data) => { try { fs.writeFileSync(file, data, { mode: 0o600 }); fs.chmodSync(file, 0o600); } catch(e) { logger.error(`Save error: ${e.message}`); } };
+const save = (file, data) => atomicWrite(file, data);
+function saveTokens(accessToken, refreshToken) {
+  if (typeof accessToken !== 'string' || !accessToken) throw new Error('Missing access token');
+  atomicWrite(CREDENTIALS, JSON.stringify({ accessToken, refreshToken }));
+}
 const read = (file, fallback = null) => { try { return fs.readFileSync(file, 'utf8').trim(); } catch { return fallback; } };
 
-const saveToken        = (t) => { save(TOKEN_FILE_PATH, t);    logger.info('Access token saved.'); };
-const saveRefreshToken = (t) => { save(REFRESH_TOKEN_FILE, t); logger.info('Refresh token saved.'); };
-const saveDevice       = (d) => { save(DEVICE_FILE_PATH, d);   logger.info(`Device ID saved: ${d}`); };
-const readToken        = ()  => read(TOKEN_FILE_PATH);
-const readRefreshToken = ()  => read(REFRESH_TOKEN_FILE);
+const saveDevice = d => { save(DEVICE_FILE_PATH, d); logger.info('Device ID saved.'); };
+function readCredentials() {
+  const stored = readJson(CREDENTIALS, null);
+  // Once migrated, never resurrect legacy tokens from an earlier session.
+  return stored === null ? { accessToken: read(TOKEN_FILE_PATH), refreshToken: read(REFRESH_TOKEN_FILE) } : stored;
+}
+const readToken = () => readCredentials().accessToken;
+const readRefreshToken = () => readCredentials().refreshToken;
 const readDevice       = ()  => read(DEVICE_FILE_PATH);
 
 function readProxies() {
@@ -70,7 +65,7 @@ function jwtPayload(token) {
 }
 function tokenExpiringSoon(token) {
   const p = jwtPayload(token);
-  if (!p?.exp) return true;
+  if (!Number.isFinite(p?.exp)) return true;
   return Date.now() >= p.exp * 1000 - REFRESH_BUFFER_MS;
 }
 
@@ -94,12 +89,12 @@ function makeClient(token = null, proxy = null, deviceId = null) {
 
   const agent = (() => {
     if (proxy) {
-      try { return makeProxyAgent(proxy); } catch(e) { logger.error(`Proxy error: ${e.message}`); }
+      try { return makeProxyAgent(proxy); } catch(e) { logger.error('Invalid proxy configuration'); }
     }
     return new https.Agent({ rejectUnauthorized: true });
   })();
 
-  const inst = axios.create({ baseURL: API_BASE_URL, headers, timeout: 30000, httpsAgent: agent, proxy: proxy ? false : undefined });
+  const inst = axios.create({ baseURL: API_BASE_URL, headers, timeout: 10000, httpsAgent: agent, proxy: false });
 
   inst.interceptors.request.use(conf => {
     conf.headers['x-date'] = Date.now().toString();
@@ -113,35 +108,37 @@ function makeClient(token = null, proxy = null, deviceId = null) {
   return inst;
 }
 
-function createSession(initAccess, initRefresh, deviceId, proxies) {
+function createSession(initAccess, initRefresh, deviceId, proxies, deps = {}) {
+  const persist = deps.persist || saveTokens;
+  const buildClient = deps.makeClient || makeClient;
   let access   = initAccess;
   let refresh  = initRefresh;
-  let busy     = false;
+  let refreshing = null;
   let failed   = false;
 
   async function doRefresh() {
     if (!refresh) { logger.error('No refresh token.'); failed = true; return false; }
     const proxy  = getRandomProxy(proxies);
-    const client = makeClient(access, proxy, deviceId); 
     try {
+      const client = buildClient(access, proxy, deviceId);
       logger.loading('Refreshing access token via POST /auth/token ...');
       const res = await client.post('/auth/token', { refreshToken: refresh });
       if (res.data.statusCode === 200) {
         const newAccess  = res.data.data?.accessToken  || res.data.data?.jwtToken;
         const newRefresh = res.data.data?.refreshToken;
-        if (newAccess) {
-          access  = newAccess;
-          if (newRefresh) refresh = newRefresh;
-          saveToken(access);
-          if (newRefresh) saveRefreshToken(refresh);
+        if (typeof newAccess === 'string' && Number.isFinite(jwtPayload(newAccess)?.exp) && jwtPayload(newAccess).exp * 1000 > Date.now()) {
+          const nextRefresh = typeof newRefresh === 'string' && newRefresh ? newRefresh : refresh;
+          persist(newAccess, nextRefresh);
+          access = newAccess;
+          refresh = nextRefresh;
           logger.success('Token refreshed successfully.');
           failed = false;
           return true;
         }
       }
-      logger.error(`Refresh failed: ${JSON.stringify(res.data)}`);
+      logger.error(`Refresh failed: [response omitted]`);
     } catch(e) {
-      logger.error(`Refresh error: ${e.response?.data?.message || e.message}`);
+      logger.error(`Refresh error: ${e.response?.status || e.code || "request_failed"}`);
     }
     failed = true;
     return false;
@@ -150,47 +147,28 @@ function createSession(initAccess, initRefresh, deviceId, proxies) {
   async function ensureFresh() {
     if (failed) return false;
     if (!tokenExpiringSoon(access)) return true;
-    if (busy) {
-      for (let i = 0; i < 30 && busy; i++) await sleep(500);
-      return !failed;
-    }
-    busy = true;
-    const ok = await doRefresh();
-    busy = false;
-    return ok;
+    if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null; });
+    return refreshing;
   }
 
-  function client(proxy = null) { return makeClient(access, proxy, deviceId); }
+  function client(proxy = null) { return buildClient(access, proxy, deviceId); }
   function getAccess()  { return access; }
   function getRefresh() { return refresh; }
   function isOk()       { return !failed; }
   function update(newAccess, newRefresh) {
     access = newAccess; if (newRefresh) refresh = newRefresh;
-    failed = false; saveToken(newAccess); if (newRefresh) saveRefreshToken(newRefresh);
+    failed = false; persist(access, refresh);
   }
 
-  function scheduleRefresh() {
-    const p     = jwtPayload(access);
-    const expMs = p?.exp ? p.exp * 1000 : Date.now() + 25 * 60 * 1000;
-    const wait  = Math.max(10000, expMs - REFRESH_BUFFER_MS - Date.now());
-    logger.info(`Next token refresh in ${Math.round(wait / 60000)} min.`);
-    setTimeout(async () => {
-      const ok = await ensureFresh();
-      if (ok) scheduleRefresh();
-    }, wait);
-  }
-
-  return { ensureFresh, client, getAccess, getRefresh, isOk, update, scheduleRefresh };
+  return { ensureFresh, client, getAccess, getRefresh, isOk, update };
 }
-
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function checkLoginId(client, loginId, deviceId) {
   try {
-    const r = await client.get(`/auth/loginId-exist-check/${loginId}`, { params: { deviceId } });
+    const r = await client.get(`/auth/loginId-exist-check/${encodeURIComponent(loginId)}`, { params: { deviceId } });
     if (r.data.statusCode === 200) { logger.success('Login ID exists.'); return true; }
-    logger.error(`Login ID check failed: ${JSON.stringify(r.data)}`); return false;
-  } catch(e) { logger.error(`Login ID error: ${e.response?.data?.message || e.message}`); return false; }
+    logger.error(`Login ID check failed: [response omitted]`); return false;
+  } catch(e) { logger.error(`Login ID error: ${e.response?.status || e.code || "request_failed"}`); return false; }
 }
 
 async function checkPasscode(client, loginId, passcode, deviceId) {
@@ -201,32 +179,32 @@ async function checkPasscode(client, loginId, passcode, deviceId) {
       const email = r.data.data?.email || r.data.data?.verificationInfo?.[0]?.gmail || null;
       return { ok: true, email };
     }
-    logger.error(`Passcode failed: ${JSON.stringify(r.data)}`); return { ok: false, email: null };
-  } catch(e) { logger.error(`Passcode error: ${e.response?.data?.message || e.message}`); return { ok: false, email: null }; }
+    logger.error(`Passcode failed: [response omitted]`); return { ok: false, email: null };
+  } catch(e) { logger.error(`Passcode error: ${e.response?.status || e.code || "request_failed"}`); return { ok: false, email: null }; }
 }
 
 async function sendOtp(client, loginId, passcode, email, deviceId) {
   try {
     const r = await client.post('/auth/send-otp-email-verify-login', { loginId, passcode, email, deviceId });
-    if (r.data.statusCode === 200) logger.success(`OTP sent to ${email}.`);
-    else logger.error(`OTP send failed: ${JSON.stringify(r.data)}`);
-  } catch(e) { logger.error(`OTP send error: ${e.response?.data?.message || e.message}`); }
+    if (r.data.statusCode === 200) logger.success('OTP sent.');
+    else logger.error(`OTP send failed: [response omitted]`);
+  } catch(e) { logger.error(`OTP send error: ${e.response?.status || e.code || "request_failed"}`); }
 }
 
 async function verifyOtp(client, loginId, otp, deviceId) {
   try {
     const r = await client.post('/auth/check-otp-email-verify-login?v=2', { loginId, otp, deviceId });
     if (r.data.statusCode === 200) {
-      logger.success(r.data.message);
+      logger.success('OTP verified.');
       return { accessToken: r.data.data.accessToken, refreshToken: r.data.data.refreshToken };
     }
-    logger.error(`OTP verify failed: ${JSON.stringify(r.data)}`); return null;
-  } catch(e) { logger.error(`OTP verify error: ${e.response?.data?.message || e.message}`); return null; }
+    logger.error(`OTP verify failed: [response omitted]`); return null;
+  } catch(e) { logger.error(`OTP verify error: ${e.response?.status || e.code || "request_failed"}`); return null; }
 }
 
 async function login(proxies, deviceId) {
   const loginId  = await promptInput('Enter your login ID: ');
-  const passcode = await promptInput('Enter your passcode: ');
+  const passcode = await promptInput('Enter your passcode: ', true);
   const proxy    = getRandomProxy(proxies);
   const client   = makeClient(null, proxy, deviceId);
 
@@ -235,251 +213,30 @@ async function login(proxies, deviceId) {
   if (!ok) return null;
 
   const email = detectedEmail || await promptInput('Enter your email for OTP: ');
-  if (detectedEmail) logger.info(`Email: ${email}`);
+
 
   await sendOtp(client, loginId, passcode, email, deviceId);
-  const otp    = await promptInput('Enter OTP: ');
+  const otp    = await promptInput('Enter OTP: ', true);
   const tokens = await verifyOtp(client, loginId, otp, deviceId);
   if (!tokens) return null;
 
-  saveToken(tokens.accessToken);
-  if (tokens.refreshToken) saveRefreshToken(tokens.refreshToken);
+  saveTokens(tokens.accessToken, tokens.refreshToken);
   return tokens;
 }
 
-async function getUserFull(client) {
-  try {
-    const r = await client.get('/auth/current-user-full?include=userInfo,token,isClaimable');
-    if (r.data.statusCode === 200) return r.data.data;
-    logger.error(`current-user-full: ${JSON.stringify(r.data)}`); return null;
-  } catch(e) { logger.error(`current-user-full error: ${e.response?.data?.message || e.message}`); return null; }
-}
-
-async function checkClaimable(client) {
-  try {
-    const r = await client.get('/token/check-is-claimable');
-    return r.data.data;
-  } catch(e) {
-    logger.error(`check-is-claimable error: ${e.response?.data?.message || e.message}`);
-    return { isClaimable: false, nextFrame: Date.now() + 5 * 60 * 1000 };
-  }
-}
-
-async function claimAirdrop(client) {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const r = await client.post('/token/claim-airdrop', '');
-      // An HTTP 200 alone does not establish that the API accepted a claim.
-      if (r.data?.statusCode !== 200) {
-        logger.warn(`Claim not confirmed: ${JSON.stringify(r.data)}`);
-        return null;
-      }
-      logger.success(`Claim endpoint accepted request: ${JSON.stringify(r.data?.data ?? null)}`);
-      return r.data?.data ?? Date.now();
-    } catch (e) {
-      const status = e.response?.status;
-      logger.error(`Claim error (${attempt}/3): [${status || 'network'}] ${e.response?.data?.message || e.message}`);
-      if (attempt < 3 && (status === 500 || status === 503 || !status)) await sleep(15000);
-      else break;
-    }
-  }
-  return null;
-}
-
-async function postClaimAds(client, lastClaimTime) {
-  try {
-    const r = await client.get(
-      `/token/get-random-ads-mining-new?totalHhp=1&lastTimeClaim=${lastClaimTime}`
-    );
-    if (r.data.statusCode === 200) {
-      const { frame, retryNumber, timeRetry } = r.data.data;
-      logger.info(`Post-claim ads: frame=${frame}, retries=${retryNumber}, interval=${timeRetry}s`);
-    }
-  } catch(e) {
-    logger.warn(`Post-claim ads error (non-critical): ${e.response?.data?.message || e.message}`);
-  }
-}
-
-function display(userInfo, token) {
-  if (!userInfo || !token) return;
-  console.log('\n' + '='.repeat(50));
-  console.log(`${colors.white}${colors.bold}USER${colors.reset}`);
-  console.log(`${colors.white}Username:   ${colors.reset}${userInfo.username}`);
-  console.log(`${colors.white}Email:      ${colors.reset}${userInfo.email}`);
-  console.log(`${colors.white}ID:         ${colors.reset}${userInfo.loginId}`);
-  console.log(`${colors.white}Tier:       ${colors.reset}${userInfo.metadata?.tierNameAmbassador || 'N/A'}`);
-  console.log(`\n${colors.yellow}${colors.bold}TOKENS${colors.reset}`);
-  console.log(`${colors.yellow}Gold:       ${colors.reset}${token.interlinkGoldTokenAmount}`);
-  console.log(`${colors.yellow}Silver:     ${colors.reset}${token.interlinkSilverTokenAmount}`);
-  console.log(`${colors.yellow}Diamond:    ${colors.reset}${token.interlinkDiamondTokenAmount}`);
-  console.log(`${colors.yellow}Interlink:  ${colors.reset}${token.interlinkTokenAmount}`);
-  console.log(`${colors.yellow}Mining/day: ${colors.reset}${token.dailyMiningRate}`);
-  console.log(`${colors.yellow}Streak:     ${colors.reset}${token.burningStreak}`);
-  console.log(`${colors.yellow}Burned:     ${colors.reset}${token.burnedCycles} cycles`);
-  console.log(`${colors.yellow}Recover:    ${colors.reset}${token.itlgRecoverable} ITLG`);
-  console.log(`${colors.yellow}Last claim: ${colors.reset}${moment(token.lastClaimTime).format('YYYY-MM-DD HH:mm:ss')}`);
-  console.log('='.repeat(50) + '\n');
-}
-
-function formatTime(ms) {
-  if (ms <= 0) return '00:00:00';
-  return [Math.floor(ms / 3600000), Math.floor((ms / 60000) % 60), Math.floor((ms / 1000) % 60)]
-    .map(v => String(v).padStart(2, '0')).join(':');
-}
-
-async function connect(session, proxies) {
-  let data = await getUserFull(session.client(null));
-  if (!data && proxies.length) {
-    for (let i = 0; i < Math.min(proxies.length, 5) && !data; i++) {
-      logger.step(`Trying proxy ${i + 1}: ${proxies[i]}`);
-      data = await getUserFull(session.client(proxies[i]));
-    }
-  }
-  if (!data) return {};
-  return { userInfo: data.userInfo, tokenInfo: data.token, isClaimable: data.isClaimable };
-}
-
-async function runBot() {
-  clear();
-  logger.banner();
-
-  const proxies    = readProxies();
-  let accessToken  = readToken();
-  let refreshToken = readRefreshToken();
-  let deviceId     = readDevice();
-
-  if (!deviceId) {
-    deviceId = crypto.randomBytes(8).toString('hex');
-    saveDevice(deviceId);
-  }
-
-  if (!accessToken) {
-    logger.step('No token found. Logging in...');
-    const tokens = await login(proxies, deviceId);
-    if (!tokens) { logger.error('Login failed. Exiting.'); process.exit(1); }
-    accessToken = tokens.accessToken;
-    refreshToken = tokens.refreshToken;
-  }
-
-  let session = createSession(accessToken, refreshToken, deviceId, proxies);
-  if (!ONCE_MODE) session.scheduleRefresh();
-
-  let { userInfo, tokenInfo, isClaimable } = await connect(session, proxies);
-
-  if (!userInfo) {
-    logger.warn('Cannot connect. Refreshing token...');
-    const ok = await session.ensureFresh();
-    if (ok) ({ userInfo, tokenInfo, isClaimable } = await connect(session, proxies));
-  }
-
-  if (!userInfo) {
-    logger.error('Still failed. Re-logging in...');
-    const tokens = await login(proxies, deviceId);
-    if (!tokens) { logger.error('Login failed. Exiting.'); process.exit(1); }
-    session = createSession(tokens.accessToken, tokens.refreshToken, deviceId, proxies);
-    if (!ONCE_MODE) session.scheduleRefresh();
-    ({ userInfo, tokenInfo, isClaimable } = await connect(session, proxies));
-    if (!userInfo) { logger.error('Failed after re-login. Exiting.'); process.exit(1); }
-  }
-
-  logger.success(`Connected as ${userInfo.username}`);
-  logger.info(`Started: ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
-  display(userInfo, tokenInfo);
-
-  async function attemptClaim() {
-    const ok = await session.ensureFresh();
-    if (!ok) {
-      logger.error('Session needs interactive re-login; skipping this check.');
-      return { claimed: false, next: Date.now() + 30000 };
-    }
-    const client = session.client(getRandomProxy(proxies));
-    const check = await checkClaimable(client);
-    if (!check?.isClaimable) {
-      logger.info('Server says not claimable yet.');
-      return { claimed: false, next: Number(check?.nextFrame) || Date.now() + 30000 };
-    }
-    logger.loading('Server reports claim available; starting claim sequence.');
-    try {
-      await client.get(`/token/get-random-ads-mining-new?totalHhp=1&lastTimeClaim=${tokenInfo?.lastClaimTime || Date.now()}`);
-      await sleep(15000);
-    } catch (e) {
-      logger.warn(`Ad request warning: ${e.response?.data?.message || e.message}`);
-    }
-    const claimTime = await claimAirdrop(client);
-    if (claimTime === null) return { claimed: false, next: Date.now() + 30000 };
-    await postClaimAds(client, typeof claimTime === 'number' ? claimTime : Date.now());
-    const updated = await getUserFull(client);
-    if (updated) {
-      userInfo = updated.userInfo;
-      tokenInfo = updated.token;
-      isClaimable = updated.isClaimable;
-      display(userInfo, tokenInfo);
-    }
-    return { claimed: true, next: Number(isClaimable?.nextFrame) || Date.now() + CLAIM_INTERVAL_MS };
-  }
-
-  if (ONCE_MODE) {
-    // Scheduled starts at :26. First window :26:00-:29:59; second :31:00-:33:59.
-    // A successful first claim never ends the process before the second window.
-    const now = new Date();
-    const hourStart = new Date(now);
-    hourStart.setMinutes(0, 0, 0);
-    const at = (minute) => hourStart.getTime() + minute * 60000;
-    const slots = [
-      { label: 'first', start: at(26), end: at(30) },
-      { label: 'second', start: at(31), end: at(34) }
-    ];
-    let count = 0;
-    for (const slot of slots) {
-      if (Date.now() < slot.start) await sleep(slot.start - Date.now());
-      if (Date.now() >= slot.end) {
-        logger.warn(`${slot.label} window missed; skipping.`);
-        continue;
-      }
-      logger.step(`Starting ${slot.label} claim window.`);
-      while (Date.now() < slot.end) {
-        const result = await attemptClaim();
-        if (result.claimed) {
-          count++;
-          logger.success(`${slot.label} claim accepted; waiting for next window if any.`);
-          break;
-        }
-        const remaining = slot.end - Date.now();
-        if (remaining <= 0) break;
-        // Poll at most every 20s, respecting server-provided nextFrame when near.
-        const untilNext = Number(result.next) - Date.now();
-        const delay = Math.min(20000, remaining, Number.isFinite(untilNext) && untilNext > 0 ? untilNext : 20000);
-        await sleep(Math.max(1000, delay));
-      }
-    }
-    logger.info(`Window complete: ${count}/2 claims accepted by endpoint.`);
+module.exports = { createSession, readToken, readRefreshToken, readDevice, tokenExpiringSoon, makeClient, saveTokens };
+if (require.main === module) {
+  if (!process.argv.includes('--login') || !process.stdin.isTTY) {
     rl.close();
-    if (count < 2) process.exitCode = 2;
-    return;
-  }
-
-  // A single sequential loop prevents overlapping claims.
-  while (true) {
-    const next = await attemptClaim();
-    const target = next.claimed ? Date.now() + CLAIM_INTERVAL_MS : Number(next.next);
-    const wait = Number.isFinite(target) ? Math.max(30000, target - Date.now()) : CLAIM_INTERVAL_MS;
-    logger.info(`Next check in ${formatTime(wait)}.`);
-    await sleep(wait);
+    console.error('Manual authentication: node index.js --login. Scheduled execution: bash run-scheduled.sh.');
+    process.exitCode = 1;
+  } else {
+    (async () => {
+      let device = readDevice();
+      if (!device) { device = crypto.randomBytes(8).toString('hex'); saveDevice(device); }
+      const tokens = await login(process.env.INTERLINK_USE_PROXY === '1' ? readProxies() : [], device);
+      if (!tokens) process.exitCode = 1;
+    })().catch(() => { logger.error('Authentication or secure storage failed.'); process.exitCode = 1; })
+      .finally(() => rl.close());
   }
 }
-
-process.on('SIGINT', () => {
-  console.log('');
-  logger.info('Bot stopped by user.');
-  rl.close();
-  process.exit(0);
-});
-process.on('uncaughtException', (err) => {
-  logger.error(`Uncaught: ${err.message}`);
-  console.error(err.stack);
-});
-process.on('unhandledRejection', (reason) => {
-  logger.error(`Unhandled rejection: ${reason}`);
-});
-
-runBot().catch(e => { logger.error(`Fatal: ${e.message}`); process.exit(1); });

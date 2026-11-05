@@ -1,3 +1,5 @@
+> **Android redesign:** See [README-mobile.md](README-mobile.md) for the companion app, secure startup refresh, installation, and testing. Use `node index.js --login` for authentication and `bash run-scheduled.sh` for scheduled execution. The historical continuous `node index.js` and `--once` modes have been retired. Older instructions below describe the upstream project.
+
 # Interlink Auto Bot
 
 Automated bot for claiming Interlink Labs airdrop tokens, designed for the Interlink platform.
