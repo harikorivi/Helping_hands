@@ -31,3 +31,14 @@ test('missing access can refresh, missing refresh fails, concurrent callers shar
   assert.deepEqual(await Promise.all([s.ensureFresh(),s.ensureFresh()]),[true,true]); assert.equal(calls,1);
   const missing=createSession(null,null,'d',[]); assert.equal(await missing.ensureFresh(),false);
 });
+test('refresh lifecycle emits safe success and rejection outcomes', async () => {
+  for(const success of [true,false]) {
+    const events=[];
+    const s=createSession(jwt(1),'secret-refresh','device',[],{persist:()=>{},onEvent:(event,data)=>events.push({event,...data}),makeClient:()=>({post:async()=>({data:success?{statusCode:200,data:{accessToken:jwt(Date.now()/1000+3600)}}:{statusCode:401}})})});
+    assert.equal(await s.ensureFresh(),success);
+    assert.equal(events[0].event,'TOKEN_REFRESH_STARTED');
+    assert.equal(events.at(-1).event,'TOKEN_REFRESH_COMPLETED');
+    assert.equal(events.at(-1).result,success?'SUCCESS':'FAILED');
+    assert.ok(!JSON.stringify(events).includes('secret-refresh'));
+  }
+});

@@ -1,6 +1,6 @@
 {
   "name": "interlink-auto-bot",
-  "version": "1.6.0",
+  "version": "1.7.0-rc.1",
   "description": "Automated bot for claiming Interlink Labs airdrop tokens",
   "main": "index.js",
   "scripts": {

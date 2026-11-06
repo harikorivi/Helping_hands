@@ -1,5 +1,7 @@
 # Android architecture and validation
 
+**Latest review:** [1.7-rc1 reliability audit](docs/RELIABILITY-AUDIT.md), [changes](docs/RELIABILITY-CHANGELOG.md), and [validation gate](docs/RELIABILITY-VALIDATION.md) supersede the initial review below where they differ. Physical long-idle reliability remains unverified.
+
 For first-time installation, follow [README-mobile.md](README-mobile.md).
 
 ## Architecture review

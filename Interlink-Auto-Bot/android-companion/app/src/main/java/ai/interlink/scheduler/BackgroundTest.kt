@@ -19,6 +19,7 @@ object BackgroundTest {
         try {
             Schedule.manager(c).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,pending(c,at))
             p.edit().putLong("probeAt",at).putLong("probeLatest",at).putString("probeStatus","Waiting for ${Schedule.time(at)}").commit()
+            Diagnostics.emit(c,"ALARM_SCHEDULED",at,"test-$at",status="registered",reason="connection_probe")
             Schedule.record(c,"Background test alarm registered: intended ${Schedule.time(at)}. No claim; registration is not delivery.")
         } catch (error: RuntimeException) {
             p.edit().putString("probeStatus","Registration failed: ${error.javaClass.simpleName}").commit()
@@ -40,11 +41,13 @@ object BackgroundTest {
 }
 class BackgroundTestReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
+        Diagnostics.emit(c,"RECEIVER_STARTED",i.getLongExtra("scheduled",0),"test-${i.getLongExtra("scheduled",0)}",reason="connection_probe")
         if (i.action != BackgroundTest.ACTION) return
         val p = Schedule.prefs(c)
         val at = i.getLongExtra("scheduled",0)
         if (at <= 0 || p.getLong("probeAt",0)!=at) return
         val now = System.currentTimeMillis()
+        Diagnostics.emit(c,"ALARM_RECEIVED",at,"test-$at",status="delivered",reason="connection_probe",details=org.json.JSONObject().put("delayMs",now-at))
         p.edit().remove("probeAt").putString("probeStatus","Alarm delivered; awaiting connection test.").commit()
         Schedule.record(c,"Background test alarm delivered: intended ${Schedule.time(at)}; actual ${Schedule.time(now)}; delay ${(now-at)/1000}s.")
         if (now < at || now >= at+120000) {

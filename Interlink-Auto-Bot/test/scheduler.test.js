@@ -84,3 +84,14 @@ test('recovery after first window closes skips it but executes second once', asy
   await executeWindow(slot, second, f.deps);
   assert.equal(f.posts(), 1);
 });
+test('two original windows confirm independently when each has fresh server eligibility and advancement',async()=>{
+ let time=0,posts=0;
+ const deps={now:()=>time,sleep:async ms=>{time+=ms;},persist:()=>{},ensureFresh:async()=>true,
+ client:()=>({get:async url=>url.includes('check-is-claimable')?{status:200,data:{data:{isClaimable:true}}}:{data:{statusCode:200,data:{token:{lastClaimTime:100+posts*100}}}},
+ post:async()=>{posts++;return {status:200,data:{statusCode:200}};}})};
+ const first={},second={};
+ await executeWindow({key:'first',number:1,start:0,end:240000},first,deps);
+ await executeWindow({key:'second',number:2,start:300000,end:480000},second,deps);
+ assert.equal(first.result,'WINDOW_1_SUCCESS');assert.equal(second.result,'WINDOW_2_SUCCESS');assert.equal(posts,2);
+ await executeWindow({key:'second',number:2,start:300000,end:480000},second,deps);assert.equal(posts,2);
+});

@@ -1,27 +1,20 @@
-# Interlink Scheduler 1.6
+# Interlink Scheduler 1.7-rc1 — validation candidate
 
-Install [Interlink-Scheduler-1.6.apk](Interlink-Scheduler-1.6.apk) with the current Node.js source. Follow the [installation and upgrade guide](../../README-mobile.md). No re-login is required if existing credentials still work.
+Install [Interlink-Scheduler-1.7-rc1.apk](Interlink-Scheduler-1.7-rc1.apk) **with the matching current Node.js source**. Follow the [installation and upgrade guide](../../README-mobile.md). Working stored credentials do not require re-login.
 
-Personal debug-signed APK, package `ai.interlink.scheduler`, version code 7, Android 8 minimum. Credentials remain in Termux and are not bundled.
+**Not production-validated. The physical phone’s missing-alarm root cause remains open.** This candidate fixes confirmed diagnostic and lifecycle gaps; it does not guarantee uninterrupted Android execution. Four-hour and overnight physical tests remain release blockers.
 
-Changes:
+Personal debug-signed APK: package `ai.interlink.scheduler`, version code 8, minimum Android 8. Credentials are not bundled. Use the same private signing key for compatible updates; never commit keys. Older APKs are historical releases.
 
-- Recover remaining valid claim windows when opening or repairing an enabled schedule, retaining the original deadline and duplicate protection.
-- Two-minute, no-claim background alarm test with independent cancellation and stage-specific diagnostics.
-- Device and power-state diagnostics; exact-alarm capability wording corrected to include battery-exemption access.
-- Retains local today/yesterday log cleanup and six independent daily alarms.
+Includes correlated persistent lifecycle events, independent claim-window outcomes, safe Node-to-companion reports, explicit unknown/error states, delivery statistics, structured export, and 4h/8h no-claim probes. See the [audit](../../docs/RELIABILITY-AUDIT.md), [changelog](../../docs/RELIABILITY-CHANGELOG.md), and [T1–T18 matrix](../../docs/RELIABILITY-VALIDATION.md).
 
-The original iQOO/Funtouch missing-delivery cause remains unverified. This release is a recovery fix and diagnostic build, not a guarantee of background execution after dismissal. See [VALIDATION-1.6.md](VALIDATION-1.6.md) for tests and limits.
-
-Built with JDK 17, SDK 35, Gradle 8.11.1, AGP 8.7.3 and Kotlin 2.0.21. Build and lint passed (0 errors, 32 warnings); signature verification passed.
+[Candidate verification](VALIDATION-1.7-rc1.md): 34 Node tests, 9 JVM tests, 13 normal emulator tests plus one separate forced-Doze test passed. Build/lint passed (0 errors, 34 warnings). APK v2 signature verified. This is not full Termux/physical-phone testing.
 
 SHA-256:
 
 ```text
-e50daab7c7fe3ff6f0dc98a6b175d861305923cd42ba19090a2a504db5484ba9
+45e93a74c613ec99895468d4e1ba974a2b204cb661024c740984c334066a6667
 ```
-
-Use the same private signing key for compatible updates; never commit keys. Older APKs are historical releases.
 
 ## Separate offline diagnostic app
 

@@ -109,6 +109,7 @@ function makeClient(token = null, proxy = null, deviceId = null) {
 }
 
 function createSession(initAccess, initRefresh, deviceId, proxies, deps = {}) {
+  const emit = deps.onEvent || (() => {});
   const persist = deps.persist || saveTokens;
   const buildClient = deps.makeClient || makeClient;
   let access   = initAccess;
@@ -117,7 +118,8 @@ function createSession(initAccess, initRefresh, deviceId, proxies, deps = {}) {
   let failed   = false;
 
   async function doRefresh() {
-    if (!refresh) { logger.error('No refresh token.'); failed = true; return false; }
+    emit('TOKEN_REFRESH_STARTED');
+    if (!refresh) { emit('TOKEN_REFRESH_COMPLETED',{reason:'missing_refresh_token',result:'FAILED'}); logger.error('No refresh token.'); failed = true; return false; }
     const proxy  = getRandomProxy(proxies);
     try {
       const client = buildClient(access, proxy, deviceId);
@@ -132,14 +134,17 @@ function createSession(initAccess, initRefresh, deviceId, proxies, deps = {}) {
           access = newAccess;
           refresh = nextRefresh;
           logger.success('Token refreshed successfully.');
+          emit('TOKEN_REFRESH_COMPLETED',{result:'SUCCESS',reason:'tokens_persisted'});
           failed = false;
           return true;
         }
       }
       logger.error(`Refresh failed: [response omitted]`);
     } catch(e) {
-      logger.error(`Refresh error: ${e.response?.status || e.code || "request_failed"}`);
+      logger.error('Refresh request failed; credentials omitted.');
+      emit('TOKEN_REFRESH_REQUEST_FAILED',require('./lib/diagnostics').failureDetails(e,'token_refresh'));
     }
+    emit('TOKEN_REFRESH_COMPLETED',{result:'FAILED',reason:'refresh_rejected_or_invalid_response'});
     failed = true;
     return false;
   }

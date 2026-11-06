@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 1.6** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 1.7-rc1 (validation candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [audit](docs/RELIABILITY-AUDIT.md) and [validation plan](docs/RELIABILITY-VALIDATION.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-1.6.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.6.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-1.7-rc1.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.7-rc1.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.6.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.7-rc1.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -318,3 +318,27 @@ Existing users: pause the schedule, let an active run finish, update the reposit
 ### When USB and wireless debugging are unavailable
 
 Use the separate [Alarm Delivery Check app](android-companion/alarm-diagnostics/README.md). Its offline two-minute/ten-minute tests record actual receiver delivery and app-opening times, then provide a copyable report. It needs no network or Termux access and makes no claims. It tests its own alarms, not another app's private state, so results must be compared with the scheduler's diagnostics.
+
+
+## Migrating to the evidence-driven validation candidate (1.7-rc1)
+
+Pause the schedule and let the current run finish. In Termux:
+
+```sh
+cd ~/Helping_hands
+git pull --ff-only
+cd Interlink-Auto-Bot
+bash setup-termux.sh
+```
+
+If Git refuses because of older local patches, preserve them with `git stash push --include-untracked -m "Phone patches before diagnostic candidate"` and retry the pull. Do not automatically pop old patches onto the current implementation. Ignored credentials/claim state remain private and untouched.
+
+Install **Interlink-Scheduler-1.7-rc1.apk** over the existing app using the same signing key. Do not uninstall first. Open the app, repair once and enable the schedule. Both Node source and APK must be upgraded: an old wrapper returns no structured result, which is displayed as **UNKNOWN**, even if its exit code is zero. No re-login is required if stored credentials still refresh.
+
+The **Execution evidence** card shows delivery statistics, last success/failure/miss/unknown, and each reported window's outcome and reason. **Copy structured execution report** exports JSONL. **Copy diagnostic history** also includes this evidence. Reports do not include raw HTTP responses, tokens, account information, passcodes or OTPs. Android environment snapshots belong to the event time; Node events have `device=null` and a separately labelled `deviceAtImport` snapshot because Termux cannot observe that historical Android state.
+
+If a run was dispatched but no callback arrives, the dashboard marks it unknown at the next reconciliation. It never assumes a timeout proves that the server rejected a claim. Submitted markers remain in the private ledger; no uncertain submission is blindly retried. Compare the private `logs/claim-YYYY-MM-DD.log` when callback evidence is unavailable.
+
+Use the new **4-hour** and **8-hour** connection probes for preliminary long-idle testing. They make no claim, but only one probe may be pending. These probes cannot replace validation of six daily scheduled runs and both real claim windows. Follow T1–T18 in the validation plan before accepting this candidate.
+
+Event details are retained for today/yesterday, bounded at 4,000 Android events. Aggregate per-run outcomes are retained for 30 days for reliability statistics; this does not prune the Node claim ledger. Node callback reports under `.runtime/reports` are diagnostic-only and cleaned on a later run after their local-day retention expires. Power broadcasts are recorded only while the process exists; the app does not keep itself alive to observe them.

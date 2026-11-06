@@ -117,6 +117,38 @@ class SchedulingIntegrationTest {
         BackgroundTest.cancel(c)
         assertEquals(0L,Schedule.prefs(c).getLong("probeAt",0))
     }
+    @Test fun receiverEntryIsVisibleEvenWhenScheduleDisabled() {
+        Schedule.prefs(c).edit().putBoolean("enabled",false).commit()
+        val at=System.currentTimeMillis()
+        AlarmReceiver().onReceive(c,Intent(c,AlarmReceiver::class.java).setAction(Schedule.ACTION).putExtra("hour",1).putExtra("scheduled",at))
+        val report=Diagnostics.report(c)
+        assertTrue(report.contains("RECEIVER_STARTED"))
+        assertTrue(report.contains("schedule_disabled"))
+    }
+    @Test fun ordinaryRecoveryDoesNotReplaceUpcomingIdentities() {
+        Schedule.recover(c,"fixture")
+        val before=ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) }
+        Schedule.recover(c,"app opened")
+        assertEquals(before,ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) })
+    }
+    @Test fun reportContractRejectsUncorrelatedAndPreservesIndependentWindowReasons() {
+        val stdout="INTERLINK_RESULT " + org.json.JSONObject().put("version",1).put("executionId","schedule-123").put("attemptId","attempt")
+            .put("scheduledAt",123).put("nodeStarted",true).put("events",org.json.JSONArray())
+            .put("windows",org.json.JSONObject().put("1",org.json.JSONObject().put("result","WINDOW_1_SUCCESS").put("reason","accepted_and_last_claim_advanced"))
+                .put("2",org.json.JSONObject().put("result","WINDOW_2_NOT_ELIGIBLE").put("reason","server_not_eligible"))).toString()
+        val parsed=ExecutionReport.parse(stdout,"schedule-123","attempt",123)!!
+        assertEquals(1,parsed.successful); assertTrue(parsed.complete)
+        assertTrue(parsed.summary.contains("Window 2: NOT_ELIGIBLE"))
+        assertNull(ExecutionReport.parse(stdout,"schedule-123","wrong",123))
+        assertNull(ExecutionReport.parse("raw sensitive output","schedule-123","attempt",123))
+    }
+    @Test fun missingNodeReportNeverBecomesTwoSuccessfulClaims() {
+        val p=Schedule.prefs(c); val at=System.currentTimeMillis()
+        p.edit().putString("runMode:fixture","scheduled").putLong("runTime:fixture",at).commit()
+        ResultReceiver().onReceive(c,Intent(c,ResultReceiver::class.java).setData(Uri.parse("interlink-result://run/fixture"))
+            .putExtra("result",Bundle().apply { putInt("exitCode",0) }))
+        assertTrue(Diagnostics.dashboard(c).contains("window results UNKNOWN"))
+    }
     @Test fun idleAlarmDeliveryWhenRequested() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testDoze") == "true")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation

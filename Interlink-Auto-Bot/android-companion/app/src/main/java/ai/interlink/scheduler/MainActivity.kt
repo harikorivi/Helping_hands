@@ -129,7 +129,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.6",13f)
+        text(titles,"Your Termux automation companion • v1.7-rc1",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -155,6 +155,17 @@ class MainActivity : Activity() {
                     Schedule.disable(this); render()
                 }.setNegativeButton("Keep enabled",null).show()
         }
+        val monitoring=box(content)
+        text(monitoring,"Execution evidence • validation candidate",18f,true)
+        text(monitoring,"Not production-validated on long-idle or overnight physical-device runs. Unknown means no sufficient evidence, not a failed server claim.",13f)
+        val state=Diagnostics.device(this)
+        text(monitoring,"Battery Saver: ${state.optBoolean("batterySaver")} • Charging: ${state.opt("charging")}\nIdle: ${state.optBoolean("idle")} • Standby bucket: ${state.optInt("standbyBucket")}\nNetwork available: ${state.optBoolean("networkAvailable")} • Validated: ${state.optBoolean("networkValidated")}\nTermux installed: ${installed()} • Command permission: ${granted(commandPermission)}",14f)
+        text(monitoring,p.getString("diagnosticError","").orEmpty(),14f,true)
+        text(monitoring,Diagnostics.dashboard(this),14f)
+        button(monitoring,"Copy structured execution report") {
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Execution evidence",Diagnostics.report(this)))
+            Toast.makeText(this,"Structured report copied",Toast.LENGTH_SHORT).show()
+        }
         val manual = box(content)
         text(manual,"Try it now",18f,true)
         text(manual,"Run immediately, even with the schedule paused. Complete the Termux setup first. Testing now does not prove alarms will run with the screen locked.")
@@ -165,6 +176,15 @@ class MainActivity : Activity() {
             if (!canRun) explain("Complete setup first", "This test requires Termux command access, exact-alarm capability and both battery exemptions.")
             else { BackgroundTest.schedule(this); render() }
         }
+        button(manual,"Long-idle connection test • in 4 hours") {
+            if (!canRun) explain("Complete setup first","The background test needs the same permissions as automatic execution.")
+            else { BackgroundTest.schedule(this,4L*60*60*1000); render() }
+        }
+        button(manual,"Overnight connection test • in 8 hours") {
+            if (!canRun) explain("Complete setup first","The background test needs the same permissions as automatic execution.")
+            else { BackgroundTest.schedule(this,8L*60*60*1000); render() }
+        }
+        text(manual,"Long tests submit no claims. Only one background test can be pending; a new test replaces it. Keep the phone untouched until after the intended time. These do not substitute for real scheduled-window validation.",13f)
         button(manual,"Cancel background alarm test") { BackgroundTest.cancel(this); render() }
         text(manual,"No claim is submitted. After scheduling the test, press Home and lock the screen. Check activity after 3 minutes. Repeat separately after swiping this app from Recents. Do not force-stop. A late or busy test is reported separately.",13f)
         button(manual,"Claim once now") {
@@ -234,11 +254,11 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.6\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.7-rc1\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
                 "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +
-                "Background test: ${p.getString("probeStatus","Not run yet")}\nActivity (UTC timestamps):\n" + p.getString("events","")
+                "Background test: ${p.getString("probeStatus","Not run yet")}\nActivity (UTC timestamps):\n" + p.getString("events","") + "\n\n" + Diagnostics.report(this)
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Scheduler diagnostics",details))
             Toast.makeText(this,"Diagnostic history copied; no tokens included",Toast.LENGTH_SHORT).show()
         }

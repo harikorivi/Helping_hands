@@ -6,7 +6,16 @@ mkdir -p logs .runtime
 # Kernel lock is released on exit, SIGKILL, or reboot. Never unlink this file.
 exec 9>.runtime/execution.lock
 logfile="logs/claim-$(date +%Y-%m-%d).log"
+# Keep the callback channel separate from all private console output.
+exec 3>&1
 exec >> "$logfile" 2>&1
+finish() {
+  code=$?
+  trap - EXIT
+  node lib/run-report.js "$@" --wrapper-exit "$code" >&3 2>/dev/null || true
+  exit "$code"
+}
+trap 'finish "$@"' EXIT
 printf '{"event":"SCHEDULED_WRAPPER_STARTED","epochSeconds":%s}\n' "$(date +%s)"
 flock -n 9 || { printf '%s\n' '{"event":"SCHEDULED_WRAPPER_BUSY"}'; exit 14; }
 # Only recognized daily logs older than yesterday; run under the shared lock.
