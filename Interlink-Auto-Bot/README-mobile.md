@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 1.4** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 1.5** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-1.4.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.4.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-1.5.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.5.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.4.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.5.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -186,6 +186,17 @@ Tap **Claim once now** and read the confirmation dialog. Confirm only if you int
 Manual claims have a one-minute cooldown and share the bot's execution lock. An uncertain submitted manual claim blocks further manual claims pending review of the actual server outcome. Do not delete `.runtime/manual.json` to bypass that protection. Separate manual claims are not included in the scheduled maximum of 12.
 
 For terminal use, `bash run-on-demand.sh test` performs the connection test. `bash run-on-demand.sh claim` requests a real claim without a confirmation prompt; use the app's confirmed button when learning the system.
+
+## Automatic log cleanup
+
+Version 1.5 keeps **today's and yesterday's logs**, using your phone's local calendar dates—not a rolling 48-hour interval. For example, on 8 November, logs dated 8 and 7 November remain; recognized daily logs dated 6 November or earlier are deleted.
+
+- **Termux:** at the start of each scheduled or on-demand execution, under the shared execution lock, cleanup removes older `logs/claim-YYYY-MM-DD.log` and `logs/on-demand-YYYY-MM-DD.log` files. It does not scan other directories or follow symlinks. A cleanup error is logged without blocking the claim/test execution.
+- **Companion:** old activity entries are removed when the app opens (even while scheduling is paused) and whenever a new activity event is recorded. UTC event timestamps are converted to the phone's local date. The existing limit of 100 stored entries still applies, so very busy days may retain fewer than two complete days. The UI shows the latest 20 entries.
+
+Credentials, `.runtime` claim records, execution locks, scheduling preferences, and the latest action status are not deleted. Unknown filenames/formats and future-dated entries are preserved conservatively; app history still has its 100-entry cap. Future dates can occur after a clock correction. Cleanup takes place at the next app opening or execution, without a separate midnight timer or background daemon.
+
+Existing users must update **both the Termux repository and the version 1.5 APK** to enable cleanup in both places. No re-login is needed.
 
 ## Troubleshooting
 

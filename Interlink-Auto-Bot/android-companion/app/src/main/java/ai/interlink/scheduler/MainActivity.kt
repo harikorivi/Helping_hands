@@ -129,7 +129,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.4",13f)
+        text(titles,"Your Termux automation companion • v1.5",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -205,6 +205,7 @@ class MainActivity : Activity() {
         }
         val events = box(content)
         text(events,"Recent activity",18f,true)
+        text(events,"Today and yesterday • up to 100 saved entries",13f)
         val lines = p.getString("events","").orEmpty().lines().filter { it.isNotBlank() }.takeLast(20).reversed()
         if (lines.isEmpty()) text(events,"No executions recorded yet. Wait for the next run shown above.")
         for (line in lines) {
@@ -226,7 +227,7 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.4\nEnabled: ${p.getBoolean("enabled",false)}\nExact alarm access: ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.5\nEnabled: ${p.getBoolean("enabled",false)}\nExact alarm access: ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nActivity (UTC timestamps):\n" + p.getString("events","")
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Scheduler diagnostics",details))

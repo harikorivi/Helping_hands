@@ -22,9 +22,10 @@ object Schedule {
         val old = PendingIntent.getBroadcast(c,1,Intent(c,AlarmReceiver::class.java).setAction(ACTION),PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
         if (old != null) { manager(c).cancel(old); old.cancel() }
     }
+    @Synchronized
     fun record(c: Context, message: String) {
         val p = prefs(c)
-        val lines = (p.getString("events", "") + "\n" + Instant.now() + " " + message).lines().takeLast(100)
+        val lines = LogRetention.retain(p.getString("events", "") + "\n" + Instant.now() + " " + message)
         p.edit().putString("events",lines.joinToString("\n")).commit()
     }
     private fun updateNext(c: Context) {
@@ -56,7 +57,15 @@ object Schedule {
             record(c,"Six independent alarms registered ($source). Next: ${time(p.getLong("next",0))}.")
         } catch (_: SecurityException) { record(c,"Alarm registration rejected. Check exact-alarm permission.") }
     }
+    @Synchronized
+    fun pruneHistory(c: Context) {
+        val p = prefs(c)
+        val old = p.getString("events", "").orEmpty()
+        val retained = LogRetention.retain(old).joinToString("\n")
+        if (retained != old) p.edit().putString("events",retained).commit()
+    }
     fun checkOnOpen(c: Context) {
+        pruneHistory(c)
         val p = prefs(c)
         if (!p.getBoolean("enabled",false)) return
         if (p.getInt("planVersion",0) != 2 || p.getString("planZone","") != ZoneId.systemDefault().id ||

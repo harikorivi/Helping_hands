@@ -87,7 +87,7 @@ A durable `submitted` marker is saved **before** the claim POST. Only one POST i
 
 Results are `WINDOW_1_SUCCESS`, `WINDOW_1_NOT_ELIGIBLE`, `WINDOW_1_FAILED`, and corresponding `WINDOW_2_*`, with separate reason fields. `FAILED` with `submission_outcome_unknown` means the server **may** have accepted the claim. Do not clear the ledger to retry it. The scheduled maximum is 12 successes/day (separate manual claims are not included), subject to actual execution and server eligibility.
 
-`flock` prevents overlapping shell runs and releases on process death. Scheduled launches must use `run-scheduled.sh`; manual launches must use `run-on-demand.sh`. Do not invoke the Node runners directly, because the wrappers hold the shared lock. Terminal authentication should happen with scheduling disabled and no active run. JSON-line logs are under `logs/`, and the private ledger is `.runtime/state.json`. Corrupt state fails closed. The ledger is not automatically pruned, preserving duplicate suppression when clocks move backward. Review/archive logs periodically if storage is limited.
+`flock` prevents overlapping shell runs and releases on process death. Scheduled launches must use `run-scheduled.sh`; manual launches must use `run-on-demand.sh`. Do not invoke the Node runners directly, because the wrappers hold the shared lock. Terminal authentication should happen with scheduling disabled and no active run. JSON-line logs are under `logs/`, and the private ledger is `.runtime/state.json`. Corrupt state fails closed. The ledger is not automatically pruned, preserving duplicate suppression when clocks move backward. Daily execution logs are pruned to today and yesterday at the next wrapper execution. Claim ledgers are never pruned by log cleanup.
 
 ## Files
 
@@ -101,6 +101,7 @@ Interlink-Auto-Bot/
   lib/eligibility.js         HTTP/application status and eligibility validation
   setup-termux.sh            first-time setup and credential-preserving upgrades
   lib/storage.js            atomic private writes; fail-closed JSON reads
+  lib/log-retention.js      local-calendar cleanup of recognized daily logs
   lib/execution-clock.js    suspend-aware clock guard and bounded waits
   lib/windows.js            local schedule and conservative confirmation predicate
   run-scheduled.sh           kernel lock, timeout and private log redirection
