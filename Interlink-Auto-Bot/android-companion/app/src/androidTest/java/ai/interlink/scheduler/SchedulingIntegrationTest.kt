@@ -82,6 +82,41 @@ class SchedulingIntegrationTest {
         assertFalse(p.contains("activeId"))
         assertTrue(p.getString("events","")!!.contains("Late/early alarm skipped"))
     }
+    @Test fun foregroundRecoveryPreservesOriginalDeadlineAndDoesNotDispatchTwice() {
+        val p = Schedule.prefs(c)
+        // Model opening 3m35s after the intended start (the reported 13:29:35 case).
+        val expected = System.currentTimeMillis()-215000
+        p.edit().putLong("alarm:13",expected).commit()
+        val launches = mutableListOf<Intent>()
+        Schedule.recover(c,"app opened") { launches.add(it) }
+        assertEquals(1,launches.size)
+        assertEquals(expected,launches.single().getLongExtra("scheduled",0))
+        assertEquals("scheduled",launches.single().getStringExtra("mode"))
+        Schedule.recover(c,"app opened") { launches.add(it) }
+        assertEquals(1,launches.size)
+        assertTrue(p.getString("events","")!!.contains("Foreground recovery accepted"))
+        assertFalse(p.getString("events","")!!.contains("Alarm delivered:"))
+    }
+    @Test fun expiredRecoveryNeverLaunchesAndDoesNotBlockOtherSlots() {
+        val p = Schedule.prefs(c)
+        p.edit().putLong("alarm:13",System.currentTimeMillis()-480001).commit()
+        Schedule.recover(c,"app opened") { fail("Expired run must never launch") }
+        assertTrue(ExecutionPolicy.hours.all { p.getLong("alarm:$it",0)>System.currentTimeMillis() })
+    }
+    @Test fun backgroundProbeIsIndependentAndLateDeliveryDoesNotDispatch() {
+        Schedule.recover(c,"fixture")
+        val before = ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) }
+        BackgroundTest.schedule(c)
+        assertEquals(before,ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) })
+        val old = System.currentTimeMillis()-120001
+        Schedule.prefs(c).edit().putLong("probeAt",old).commit()
+        BackgroundTestReceiver().onReceive(c,Intent(c,BackgroundTestReceiver::class.java)
+            .setAction(BackgroundTest.ACTION).putExtra("scheduled",old))
+        assertFalse(Schedule.prefs(c).contains("activeId"))
+        assertTrue(Schedule.prefs(c).getString("probeStatus","")!!.contains("outside"))
+        BackgroundTest.cancel(c)
+        assertEquals(0L,Schedule.prefs(c).getLong("probeAt",0))
+    }
     @Test fun idleAlarmDeliveryWhenRequested() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testDoze") == "true")
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation

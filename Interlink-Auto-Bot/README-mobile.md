@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 1.5** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 1.6** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-1.5.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.5.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-1.6.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.6.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.5.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.6.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -189,14 +189,14 @@ For terminal use, `bash run-on-demand.sh test` performs the connection test. `ba
 
 ## Automatic log cleanup
 
-Version 1.5 keeps **today's and yesterday's logs**, using your phone's local calendar dates—not a rolling 48-hour interval. For example, on 8 November, logs dated 8 and 7 November remain; recognized daily logs dated 6 November or earlier are deleted.
+Version 1.6 keeps **today's and yesterday's logs**, using your phone's local calendar dates—not a rolling 48-hour interval. For example, on 8 November, logs dated 8 and 7 November remain; recognized daily logs dated 6 November or earlier are deleted.
 
 - **Termux:** at the start of each scheduled or on-demand execution, under the shared execution lock, cleanup removes older `logs/claim-YYYY-MM-DD.log` and `logs/on-demand-YYYY-MM-DD.log` files. It does not scan other directories or follow symlinks. A cleanup error is logged without blocking the claim/test execution.
 - **Companion:** old activity entries are removed when the app opens (even while scheduling is paused) and whenever a new activity event is recorded. UTC event timestamps are converted to the phone's local date. The existing limit of 100 stored entries still applies, so very busy days may retain fewer than two complete days. The UI shows the latest 20 entries.
 
 Credentials, `.runtime` claim records, execution locks, scheduling preferences, and the latest action status are not deleted. Unknown filenames/formats and future-dated entries are preserved conservatively; app history still has its 100-entry cap. Future dates can occur after a clock correction. Cleanup takes place at the next app opening or execution, without a separate midnight timer or background daemon.
 
-Existing users must update **both the Termux repository and the version 1.5 APK** to enable cleanup in both places. No re-login is needed.
+Existing users must update **both the Termux repository and the version 1.6 APK** to enable cleanup in both places. No re-login is needed.
 
 ## Troubleshooting
 
@@ -293,3 +293,24 @@ The companion checks both wall-clock and Android elapsed-realtime deadlines. If 
 `run-scheduled.sh` logs entry before checking the execution lock. A busy lock returns a distinct non-success result. The log therefore distinguishes a wrapper that started but was busy from a command that never reached Termux. The intended alarm timestamp travels through the wrapper, preventing a very late command from being treated as a fresh scheduled window.
 
 Emulator and simulated-clock tests improve confidence but do not guarantee OEM overnight behavior. After upgrading, verify one locked-screen scheduled execution and use **Copy diagnostic history** if it fails. Never force-stop either app.
+
+
+## Background alarm diagnosis and recovery (1.6)
+
+Exact-alarm **capability** is Android's `canScheduleExactAlarms()` result. It can be available through a battery exemption; it does not prove that the separate Alarms & reminders toggle is granted, nor that an alarm was delivered. See [Android AlarmManager](https://developer.android.com/reference/android/app/AlarmManager#canScheduleExactAlarms()).
+
+For a no-claim background test:
+
+1. Complete setup for both apps. Tap **Test background alarm • in 2 minutes** once. It also works with the daily schedule paused.
+2. Press Home and lock the screen. After three minutes, reopen the app and copy diagnostic history.
+3. Look for **Background test alarm delivered**, **Run service entered**, command dispatch and the connection result. Registration alone is not success. The test uses the same exact-alarm mechanism and Termux execution service as scheduled runs, but never invokes claim mode.
+4. Repeat separately after swiping the scheduler from Recent Apps. Record which condition you tested. Do not force-stop either app. Avoid testing around the daily claim windows (minutes 24–34 at scheduled hours); the bot reserves those minutes and reports a deferred test. Frequent idle tests can also be affected by Android alarm throttling.
+5. If there is no delivery, send diagnostic history including device/version information. A delayed delivery is recorded even if it is too late to execute. This test has a two-minute execution deadline from its intended alarm time.
+
+A pending test can be cancelled independently. Pausing future runs cancels pending diagnostic alarms too; an already dispatched command may finish.
+
+Opening or manually repairing an enabled schedule during its original :26–:34 execution period now attempts the remaining windows. At 13:29:35 the original 13:26 timestamp is retained, and execution must still stop at 13:34. Closed windows are skipped, and the shared lock and persistent claim ledger prevent duplicate submissions. This is recorded as **foreground recovery**, not alarm delivery. Opening after :34 never replays expired claims. Background reboot/time-change recovery rearms future slots; it does not launch a catch-up service.
+
+**Known limitation:** the missing alarm on the reported iQOO 7/Funtouch OS 14 has not been reproduced conclusively on that device. Version 1.6 fixes foreground recovery and adds diagnostics; it does not claim to cure manufacturer-specific suppression or force-stop behavior.
+
+Existing users: pause the schedule, let an active run finish, update the repository and install the 1.6 APK over the existing app. Open it and repair the schedule. If Git reports local patch conflicts, preserve them with `git stash push --include-untracked -m "Phone backup before update"`, then `git pull --ff-only`; do not reapply old patches automatically. Keep the stash as a backup. Credentials ignored by Git remain in place; no new login is required if they still work.

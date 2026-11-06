@@ -8,7 +8,7 @@ const { slotsFor, confirmed } = require('../lib/windows');
 const { atomicWrite, readJson } = require('../lib/storage');
 const { executeWindow } = require('../scheduled');
 function fake(options = {}) {
-  let time = 0, posts = 0, reads = 0;
+  let time = options.startTime || 0, posts = 0, reads = 0;
   const state = {}, slot = { key: 'test', number: 1, start: 0, end: 180000 };
   const deps = { now: () => time, sleep: async ms => { time += ms; }, persist: () => {}, ensureFresh: async () => !options.authFailure,
     client: () => ({
@@ -68,4 +68,19 @@ test('atomic private file replacement and corrupt ledger fail closed', () => {
     assert.equal(fs.statSync(file).mode & 0o777,0o600);
     fs.writeFileSync(file,'broken'); assert.throws(()=>readJson(file,{}));
   } finally { fs.rmSync(dir,{recursive:true}); }
+});
+
+test('recovery after first window closes skips it but executes second once', async () => {
+  const f = fake({ startTime: 245000 });
+  f.slot.end = 240000; // Actual first window closes at :30.
+  await executeWindow(f.slot, f.state, f.deps);
+  assert.equal(f.state.result, 'WINDOW_1_FAILED');
+  assert.equal(f.posts(), 0);
+  const second = {};
+  const slot = { ...f.slot, key: 'recovered-2', number: 2, start: 300000, end: 480000 };
+  await executeWindow(slot, second, f.deps);
+  assert.equal(second.result, 'WINDOW_2_SUCCESS');
+  assert.equal(f.posts(), 1);
+  await executeWindow(slot, second, f.deps);
+  assert.equal(f.posts(), 1);
 });

@@ -129,7 +129,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.5",13f)
+        text(titles,"Your Termux automation companion • v1.6",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -160,6 +160,13 @@ class MainActivity : Activity() {
         text(manual,"Run immediately, even with the schedule paused. Complete the Termux setup first. Testing now does not prove alarms will run with the screen locked.")
         text(manual,p.getString("manualResult","No on-demand action yet.").orEmpty(),15f,true)
         button(manual,"Test connection now • no claim",true) { startManual("test") }
+        text(manual,"Background alarm test: ${p.getString("probeStatus","Not run yet")}",14f)
+        button(manual,"Test background alarm • in 2 minutes") {
+            if (!canRun) explain("Complete setup first", "This test requires Termux command access, exact-alarm capability and both battery exemptions.")
+            else { BackgroundTest.schedule(this); render() }
+        }
+        button(manual,"Cancel background alarm test") { BackgroundTest.cancel(this); render() }
+        text(manual,"No claim is submitted. After scheduling the test, press Home and lock the screen. Check activity after 3 minutes. Repeat separately after swiping this app from Recents. Do not force-stop. A late or busy test is reported separately.",13f)
         button(manual,"Claim once now") {
             AlertDialog.Builder(this).setTitle("Submit one eligible claim?")
                 .setMessage("This is a real claim, not a test. It checks server eligibility and submits at most once. It may affect eligibility for the next scheduled window. An uncertain submission will not be retried. Continue?")
@@ -179,8 +186,8 @@ class MainActivity : Activity() {
         }
         val alarms = box(content)
         text(alarms,"2. Allow scheduled alarms",18f,true)
-        text(alarms,if (Schedule.allowed(this)) "Allowed ✓" else "Permission needed",16f,true)
-        text(alarms,"Select Interlink Scheduler on the Alarms & reminders screen. This is not a setting for Termux.")
+        text(alarms,if (Schedule.allowed(this)) "Exact-alarm capability available ✓" else "Permission needed",16f,true)
+        text(alarms,"Android reports whether exact alarms are currently permitted. Battery exemption can also provide this capability, so this status does not prove the Settings toggle is enabled. The button opens Android Settings; it is not a permission switch. Select Interlink Scheduler, not Termux.")
         button(alarms,"Open Scheduler alarm settings") {
             if (Build.VERSION.SDK_INT >= 31) openSettings(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))
             else explain("No alarm permission needed", "This Android version does not have the Alarms & reminders permission screen. Alarm access is already available.")
@@ -227,9 +234,11 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.5\nEnabled: ${p.getBoolean("enabled",false)}\nExact alarm access: ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.6\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
-                "\nActivity (UTC timestamps):\n" + p.getString("events","")
+                "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
+                "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +
+                "Background test: ${p.getString("probeStatus","Not run yet")}\nActivity (UTC timestamps):\n" + p.getString("events","")
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Scheduler diagnostics",details))
             Toast.makeText(this,"Diagnostic history copied; no tokens included",Toast.LENGTH_SHORT).show()
         }

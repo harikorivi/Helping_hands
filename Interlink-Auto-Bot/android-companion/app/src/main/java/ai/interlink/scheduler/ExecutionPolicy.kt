@@ -25,7 +25,7 @@ object ExecutionPolicy {
         12 -> "${label(mode)} request failed. Check the log for stage and HTTP status."
         13 -> "API response format was unexpected. Check the safe field-type diagnostics."
         14 -> "${label(mode)} skipped: another bot execution holds the lock."
-        20 -> "${label(mode)} skipped: outside its allowed execution time."
+        20 -> "${label(mode)} deferred: minutes 24–34 of scheduled hours are reserved for automatic runs. Try after minute 34."
         21 -> "Manual claim outcome is uncertain. Do not retry; review the log and server outcome."
         22 -> "Wait at least one minute between manual claim attempts."
         23 -> "This window was already attempted; no duplicate submission."

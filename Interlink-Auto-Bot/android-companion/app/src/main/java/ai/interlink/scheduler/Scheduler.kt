@@ -37,8 +37,9 @@ object Schedule {
         val next = ExecutionPolicy.next(hour,ZonedDateTime.now())
         manager(c).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,next,pending(c,hour,next))
         prefs(c).edit().putLong("alarm:$hour",next).commit()
+        record(c,"Alarm registration accepted: hour $hour; intended ${time(next)}; RTC_WAKEUP / setExactAndAllowWhileIdle. Registration is not delivery.")
     }
-    fun recover(c: Context, source: String = "manual repair") {
+    fun recover(c: Context, source: String = "manual repair", launch: (Intent) -> Unit = { c.startForegroundService(it) }) {
         val p = prefs(c)
         if (!p.getBoolean("enabled",false)) return
         cancelLegacy(c)
@@ -47,7 +48,13 @@ object Schedule {
         for (hour in ExecutionPolicy.hours) {
             val expected = p.getLong("alarm:$hour",0)
             if (expected > 0 && expected <= now && p.getLong("delivered:$hour",0) != expected) {
-                record(c,"Overdue alarm detected during $source: intended ${time(expected)}; checked ${time(now)}. This is recovery, not proof of alarm delivery. No catch-up claim.")
+                if (ExecutionPolicy.inWindow(expected,now) && source in listOf("app opened","manual repair")) {
+                    record(c,"Recovering remaining windows during $source: intended ${time(expected)}; checked ${time(now)}. Original deadline retained; this is not alarm delivery.")
+                    AlarmReceiver().receive(c,Intent(c,AlarmReceiver::class.java).setAction(ACTION)
+                        .putExtra("hour",hour).putExtra("scheduled",expected).putExtra("recovery",true),launch)
+                } else {
+                    record(c,"Overdue alarm detected during $source: intended ${time(expected)}; checked ${time(now)}. No execution launched outside foreground recovery; no expired claims replayed.")
+                }
             }
         }
         try {
@@ -66,6 +73,7 @@ object Schedule {
     }
     fun checkOnOpen(c: Context) {
         pruneHistory(c)
+        BackgroundTest.check(c)
         val p = prefs(c)
         if (!p.getBoolean("enabled",false)) return
         if (p.getInt("planVersion",0) != 2 || p.getString("planZone","") != ZoneId.systemDefault().id ||
@@ -78,6 +86,7 @@ object Schedule {
     fun disable(c: Context) {
         prefs(c).edit().putBoolean("enabled",false).remove("next").commit()
         cancelLegacy(c)
+        BackgroundTest.cancel(c)
         for (hour in ExecutionPolicy.hours) { manager(c).cancel(pending(c,hour)); prefs(c).edit().remove("alarm:$hour").commit() }
         record(c,"Schedule paused. Current execution, if any, may finish.")
     }
@@ -96,7 +105,8 @@ class RecoveryReceiver : BroadcastReceiver() {
     }
 }
 class AlarmReceiver : BroadcastReceiver() {
-    override fun onReceive(c: Context, i: Intent) {
+    override fun onReceive(c: Context, i: Intent) = receive(c,i)
+    fun receive(c: Context, i: Intent, launch: (Intent) -> Unit = { c.startForegroundService(it) }) {
         if (i.action != Schedule.ACTION) return
         val p = Schedule.prefs(c)
         if (!p.getBoolean("enabled",false)) return
@@ -108,13 +118,14 @@ class AlarmReceiver : BroadcastReceiver() {
             Schedule.record(c,"Duplicate or replaced alarm ignored: intended ${Schedule.time(expected)}."); return
         }
         p.edit().putLong("delivered:$hour",expected).commit()
-        Schedule.record(c,"Alarm delivered: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; delay ${(actual-expected)/1000}s.")
+        val recovery = i.getBooleanExtra("recovery",false)
+        Schedule.record(c,"${if (recovery) "Foreground recovery accepted" else "Alarm delivered"}: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; delay ${(actual-expected)/1000}s.")
         Schedule.rearmDelivered(c,hour) // Only this slot: do not replace other pending deliveries.
         if (!ExecutionPolicy.inWindow(expected,actual)) {
             Schedule.record(c,"Late/early alarm skipped. Intended ${Schedule.time(expected)}; delivery ${Schedule.time(actual)}. No claim launched."); return
         }
-        try { c.startForegroundService(Intent(c,RunService::class.java).putExtra("scheduled",expected).putExtra("mode","scheduled")) }
-        catch (_: RuntimeException) { Schedule.record(c,"Android rejected the scheduled service start for ${Schedule.time(expected)}. Check background restrictions.") }
+        try { launch(Intent(c,RunService::class.java).putExtra("scheduled",expected).putExtra("mode","scheduled")) }
+        catch (error: RuntimeException) { Schedule.record(c,"Scheduled service start rejected: ${error.javaClass.simpleName}; intended ${Schedule.time(expected)}. No Termux dispatch.") }
     }
 }
 
@@ -129,6 +140,7 @@ class RunService : Service() {
     private fun expire() {
         Schedule.record(this,"${ExecutionPolicy.label(mode)} deadline reached: intended stop ${Schedule.time(wallDeadline)}; handled ${Schedule.time(System.currentTimeMillis())}. Termux must stop further requests on resume.")
         if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Execution deadline reached. Check the on-demand log; submitted claims may be uncertain.").commit()
+        if (Schedule.prefs(this).getBoolean("runProbe:$runId",false) && Schedule.prefs(this).getLong("probeLatest",0)==Schedule.prefs(this).getLong("runTime:$runId",-1)) Schedule.prefs(this).edit().putString("probeStatus","Alarm delivered; connection execution deadline reached.").commit()
         cleanup()
     }
     private val tick = object : Runnable {
@@ -143,6 +155,7 @@ class RunService : Service() {
         val expected = i?.getLongExtra("scheduled",0) ?: 0
         mode = i?.getStringExtra("mode")?.takeIf { it == "test" || it == "claim" } ?: "scheduled"
         val actual = System.currentTimeMillis()
+        Schedule.record(this,"Run service entered: mode=$mode; intended=${Schedule.time(expected)}; actual=${Schedule.time(actual)}.")
         wallDeadline = expected + if (mode == "scheduled") 480_000 else 120_000
         val remaining = wallDeadline - actual
         val nm = getSystemService(NotificationManager::class.java)
@@ -159,9 +172,9 @@ class RunService : Service() {
         val p = Schedule.prefs(this)
         val previous = p.getString("runIds","").orEmpty().split(',').filter { it.isNotEmpty() }
         val edit = p.edit()
-        for (old in previous.dropLast(39)) edit.remove("runMode:$old").remove("runTime:$old")
+        for (old in previous.dropLast(39)) edit.remove("runMode:$old").remove("runTime:$old").remove("runProbe:$old")
         edit.putString("runIds",(previous.takeLast(39)+id).joinToString(","))
-            .putString("runMode:$id",mode).putLong("runTime:$id",expected)
+            .putString("runMode:$id",mode).putLong("runTime:$id",expected).putBoolean("runProbe:$id",i?.getBooleanExtra("probe",false) == true)
             .putString("activeId",id).putLong("active",actual).putLong("activeUntil",wallDeadline).putString("activeMode",mode)
         if (mode != "scheduled") edit.putString("lastManualId",id).putString("manualResult","Starting ${ExecutionPolicy.label(mode).lowercase()}…")
         edit.commit()
@@ -184,6 +197,7 @@ class RunService : Service() {
         } catch (_: RuntimeException) {
             callback.cancel()
             if (mode != "scheduled") p.edit().putString("manualResult","Could not start Termux. Check permissions and background settings.").commit()
+            if (p.getBoolean("runProbe:$id",false) && p.getLong("probeLatest",0)==expected) p.edit().putString("probeStatus","Alarm delivered; Termux dispatch failed. Check command permission and Termux installation.").commit()
             Schedule.record(this,"${ExecutionPolicy.label(mode)} dispatch failed. Check Termux command permission and background settings."); stopSelf()
         }
         return START_NOT_STICKY
@@ -209,9 +223,10 @@ class ResultReceiver : BroadcastReceiver() {
         val active = p.getString("activeId",null) == id
         val expected = p.getLong("runTime:$id",0)
         val message = ExecutionPolicy.outcome(mode,exit)
+        if (p.getBoolean("runProbe:$id",false) && p.getLong("probeLatest",0)==expected) p.edit().putString("probeStatus","Alarm delivered. $message").commit()
         Schedule.record(c,"$message Intended start ${Schedule.time(expected)}.${if (!active) " Completion arrived after service ended; this is not a new run." else ""}")
         if (mode != "scheduled" && p.getString("lastManualId",null) == id) p.edit().putString("manualResult",message).commit()
-        p.edit().remove("runMode:$id").remove("runTime:$id").commit()
+        p.edit().remove("runMode:$id").remove("runTime:$id").remove("runProbe:$id").commit()
         if (active) c.stopService(Intent(c,RunService::class.java))
     }
 }

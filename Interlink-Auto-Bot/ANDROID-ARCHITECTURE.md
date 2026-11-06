@@ -173,3 +173,12 @@ The reported 01:30:33 false missed-window result is reproduced using injected wa
 Android unit tests cover six independent local alarm times, delayed delivery, exact end boundaries, midnight, DST, elapsed-realtime deadlines and mode-specific completion descriptions. Instrumented tests exercise actual receiver/recovery code, duplicate and delayed delivery, callback isolation, boot/timezone recovery, and an OS-delivered alarm with an expired payload that cannot launch claims. An opt-in Doze test is run separately to avoid repeated idle alarms conflicting with Android's per-app quotas. No live account is used by these tests.
 
 Sources for clock semantics: [libuv Linux uptime implementation](https://github.com/libuv/libuv/blob/v1.x/src/unix/linux.c), [Linux CLOCK_BOOTTIME and CLOCK_MONOTONIC](https://man7.org/linux/man-pages/man2/clock_gettime.2.html).
+
+
+### Version 1.6 recovery and diagnostic changes
+
+Foreground opening/manual repair dispatches an undelivered slot only within its original eight-minute lifetime. It preserves the intended timestamp and distinguishes recovery from OS delivery; subsequent callbacks for the replaced slot are rejected. The existing shell lock and Node ledger remain the claim-level duplicate barriers. Background recovery only rearms future alarms.
+
+`BackgroundTest.kt` provides an independent, cancellable two-minute exact alarm with a separate PendingIntent identity. Its receiver records lateness, rejects expired/busy execution and invokes only connection-test mode through RunService. Daily alarm registration is not altered. Device/API level, power state, registration acceptance and service entry are included in diagnostics. Exact-alarm capability may be provided by power-save exemption, so UI text does not equate it with a user-granted Settings toggle.
+
+See `android-companion/releases/VALIDATION-1.6.md` for actual validation and unresolved device limitations.
