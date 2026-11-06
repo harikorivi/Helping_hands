@@ -129,6 +129,14 @@ class MainActivity : Activity() {
             addView(content)
         })
     }
+    override fun onStart() {
+        super.onStart()
+        Diagnostics.debug(this,"APP_FOREGROUND","activity_visible")
+    }
+    override fun onStop() {
+        Diagnostics.debug(this,"APP_BACKGROUND","activity_not_visible; home_swipe_lock_not_distinguished")
+        super.onStop()
+    }
     override fun onResume() {
         super.onResume()
         Schedule.checkOnOpen(this)
@@ -171,7 +179,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.7-rc2",13f)
+        text(titles,"Your Termux automation companion • v1.7-rc3",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -210,6 +218,25 @@ class MainActivity : Activity() {
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Execution evidence",Diagnostics.report(this)))
             Toast.makeText(this,"Structured report copied",Toast.LENGTH_SHORT).show()
         }
+        val debugCard = box(content)
+        text(debugCard,"Live testing diagnostics",18f,true)
+        val debugSwitch = Switch(this).apply {
+            text = "Live debug logging"
+            isChecked = Diagnostics.liveDebug(this@MainActivity)
+            setOnCheckedChangeListener { _, enabled ->
+                Schedule.prefs(this@MainActivity).edit().putBoolean("liveDebug",enabled).commit()
+                Diagnostics.emit(this@MainActivity,if(enabled) "DEBUG_LOGGING_ENABLED" else "DEBUG_LOGGING_DISABLED")
+                if(enabled) Diagnostics.debug(this@MainActivity,"APP_FOREGROUND","logging_enabled_while_activity_visible")
+            }
+        }
+        debugCard.addView(debugSwitch)
+        text(debugCard,"Enable before a live test. Records app visibility, observed screen on/off, unlock and power changes with device state. Core alarm and execution evidence stays on even when this switch is off. No continuous polling or wake lock.",13f)
+        text(debugCard,"Android can stop this process: events during that gap cannot be recorded. Background does not identify whether you pressed Home, swiped Recents, locked the phone or opened another screen. Screen off does not prove Doze. Event timestamps show when this app observed the change.",13f)
+        button(debugCard,"Record system state now") {
+            Diagnostics.emit(this,"MANUAL_STATE_SNAPSHOT",reason="user_requested")
+            Toast.makeText(this,"System state recorded in diagnostic log",Toast.LENGTH_SHORT).show()
+        }
+        text(debugCard,"Save the report using the Downloads button above. Retention: today and yesterday, up to 4,000 structured events. Exported files remain until deleted.",13f)
         val manual = box(content)
         text(manual,"Try it now",18f,true)
         text(manual,"Run immediately, even with the schedule paused. Complete the Termux setup first. Testing now does not prove alarms will run with the screen locked.")
@@ -298,7 +325,7 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.7-rc2\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.7-rc3\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
                 "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +

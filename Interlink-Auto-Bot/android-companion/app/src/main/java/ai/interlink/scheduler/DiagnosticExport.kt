@@ -21,7 +21,7 @@ object DiagnosticExport {
         val p = Schedule.prefs(c)
         val version = c.packageManager.getPackageInfo(c.packageName, 0).versionName
         return "Interlink Scheduler $version\nExported: ${java.time.Instant.now()}\n" +
-            "Enabled: ${p.getBoolean("enabled", false)}\n" +
+            "Enabled: ${p.getBoolean("enabled", false)}\nLive debug logging: ${Diagnostics.liveDebug(c)}\n" +
             "Current device state (not historical): ${Diagnostics.device(c)}\n" +
             "Background test: ${p.getString("probeStatus", "Not run yet")}\n\n" +
             ExecutionPolicy.hours.joinToString("\n") { hour ->

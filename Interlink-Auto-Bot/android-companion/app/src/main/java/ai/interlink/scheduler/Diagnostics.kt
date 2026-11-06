@@ -22,6 +22,10 @@ object Diagnostics {
         }
         return helper!!.writableDatabase
     }
+    fun liveDebug(c: Context) = Schedule.prefs(c).getBoolean("liveDebug",false)
+    fun debug(c: Context, event: String, reason: String = "") {
+        if (liveDebug(c)) emit(c,event,reason=reason)
+    }
     fun id(at: Long) = "schedule-$at"
     fun device(c: Context): JSONObject {
         val pm=c.getSystemService(PowerManager::class.java)
@@ -31,6 +35,10 @@ object Diagnostics {
         return JSONObject().put("androidVersion",Build.VERSION.RELEASE).put("sdk",Build.VERSION.SDK_INT)
             .put("batterySaver",pm.isPowerSaveMode).put("charging",battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED,0)?.let { it != 0 } ?: JSONObject.NULL)
             .put("idle",pm.isDeviceIdleMode).put("interactive",pm.isInteractive)
+            .put("keyguardLocked",c.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked)
+            .put("deviceLocked",c.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked)
+            .put("manufacturer",Build.MANUFACTURER).put("model",Build.MODEL)
+            .put("liveDebugEnabled",liveDebug(c))
             .put("standbyBucket",if(Build.VERSION.SDK_INT>=28) c.getSystemService(UsageStatsManager::class.java).appStandbyBucket else -1)
             .put("exactAlarmCapability",Schedule.allowed(c)).put("batteryExempt",pm.isIgnoringBatteryOptimizations(c.packageName))
             .put("networkAvailable",caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true)
@@ -119,11 +127,19 @@ object Diagnostics {
 }
 class DiagnosticApplication : android.app.Application() {
     private val receiver=object:BroadcastReceiver() {
-        override fun onReceive(c:Context,i:Intent) { Diagnostics.emit(c,"POWER_STATE_CHANGED",reason=i.action?.substringAfterLast('.') ?: "unknown") }
+        override fun onReceive(c:Context,i:Intent) {
+            val event = when(i.action) {
+                Intent.ACTION_SCREEN_ON -> "SCREEN_ON_OBSERVED"
+                Intent.ACTION_SCREEN_OFF -> "SCREEN_OFF_OBSERVED"
+                Intent.ACTION_USER_PRESENT -> "USER_UNLOCK_OBSERVED"
+                else -> "POWER_STATE_CHANGED"
+            }
+            Diagnostics.debug(c,event,reason=i.action?.substringAfterLast('.') ?: "unknown")
+        }
     }
     override fun onCreate() {
         super.onCreate()
-        val filter=IntentFilter().apply { addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED); addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED); addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED) }
+        val filter=IntentFilter().apply { addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED); addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED); addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_USER_PRESENT) }
         if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED) else registerReceiver(receiver,filter)
         // Dynamic receiver exists only while this process lives; no resident monitoring service.
         Diagnostics.emit(this,"PROCESS_STARTED")

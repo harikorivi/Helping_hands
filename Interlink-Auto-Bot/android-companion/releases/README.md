@@ -1,4 +1,16 @@
-# Interlink Scheduler 1.7-rc2 — diagnostic file export
+# Interlink Scheduler 1.7-rc3 — configurable live diagnostics
+
+[Download Interlink-Scheduler-1.7-rc3.apk](Interlink-Scheduler-1.7-rc3.apk). Install over the existing app; do not uninstall. Package `ai.interlink.scheduler`, version code 10. Existing 1.7-rc1/rc2 Node source does not need another update for these Android-only features. No re-login required.
+
+Enable **Live testing diagnostics → Live debug logging**, then optionally tap **Record system state now**. After testing, use **Save diagnostic log to Downloads** and share the text file from **Downloads → Interlink Scheduler**. Turn extra debugging off when finished; core execution evidence stays on.
+
+Records app visibility, observed screen/unlock/power transitions and system state while the process exists. It cannot observe events while killed and cannot distinguish Home from swipe solely from activity visibility. **This does not fix or establish the cause of delayed alarm delivery on unlock.**
+
+[Instructions](../../README-mobile.md) · [Validation](VALIDATION-1.7-rc3.md).
+
+SHA-256: `ba8ad13bc4702f00a98bb3109f08030f3f87a96975f226bd5f8ec59e1cd8159d`.
+
+## Previous export candidate 1.7-rc2
 
 [Download Interlink-Scheduler-1.7-rc2.apk](Interlink-Scheduler-1.7-rc2.apk). Install over the existing app; do not uninstall. Version code 9, package `ai.interlink.scheduler`, same signing identity. If already using the 1.7-rc1 Node source, this feature only needs the APK update; no login or Node change is needed.
 

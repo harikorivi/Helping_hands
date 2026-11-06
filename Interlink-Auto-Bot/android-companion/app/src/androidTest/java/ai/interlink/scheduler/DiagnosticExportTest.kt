@@ -11,6 +11,28 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DiagnosticExportTest {
+    @Test fun liveDebugToggleGatesExtraEventsButKeepsCoreEvidence() {
+        val c = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs = Schedule.prefs(c)
+        val before = Diagnostics.liveDebug(c)
+        val marker = java.util.UUID.randomUUID().toString()
+        try {
+            prefs.edit().putBoolean("liveDebug",false).commit()
+            Diagnostics.debug(c,"APP_BACKGROUND",marker + "-disabled")
+            Diagnostics.emit(c,"MANUAL_STATE_SNAPSHOT",reason=marker + "-core")
+            assertFalse(Diagnostics.report(c).contains(marker + "-disabled"))
+            assertTrue(Diagnostics.report(c).contains(marker + "-core"))
+            prefs.edit().putBoolean("liveDebug",true).commit()
+            Diagnostics.debug(c,"APP_FOREGROUND",marker + "-enabled")
+            assertTrue(Diagnostics.report(c).contains(marker + "-enabled"))
+            val state = Diagnostics.device(c)
+            assertTrue(state.getBoolean("liveDebugEnabled"))
+            assertTrue(state.has("deviceLocked"))
+            assertTrue(state.has("interactive"))
+            assertTrue(DiagnosticExport.snapshot(c).contains(marker + "-enabled"))
+        } finally { prefs.edit().putBoolean("liveDebug",before).commit() }
+    }
+
     @Test fun downloadsExportIsPublishedAndReadableWithoutStoragePermission() {
         assumeTrue(Build.VERSION.SDK_INT >= 29)
         val c = InstrumentationRegistry.getInstrumentation().targetContext

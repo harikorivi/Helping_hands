@@ -1,3 +1,10 @@
+# Live debug candidate 1.7-rc3
+
+- Added persistent, default-off Live debug logging switch, app visibility events, observed screen/unlock/power events and an on-demand system-state snapshot.
+- All event snapshots now include device/keyguard lock state, model/manufacturer and debug-enabled state. Core execution evidence remains enabled regardless of the switch.
+- Observers exist only while the process lives; no new service, polling or wake lock. Background events do not distinguish Home from swipe or lock. No assertion that an unobserved transition never happened.
+- Retains Downloads text-log export. Scheduling and Node logic unchanged; unlock-dependent delivery is unresolved.
+
 # Diagnostic export candidate 1.7-rc2
 
 - Added **Save diagnostic log to Downloads**: one UTF-8 text file with companion activity, current device state, scheduled slots, outcome summaries and structured events. Android 10+ uses MediaStore Downloads without storage permission; Android 8/9 uses the system save picker.
