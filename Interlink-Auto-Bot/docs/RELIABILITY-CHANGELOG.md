@@ -1,3 +1,11 @@
+# Diagnostic export candidate 1.7-rc2
+
+- Added **Save diagnostic log to Downloads**: one UTF-8 text file with companion activity, current device state, scheduled slots, outcome summaries and structured events. Android 10+ uses MediaStore Downloads without storage permission; Android 8/9 uses the system save picker.
+- Export runs off the UI thread. Pending Downloads files are published only after writing completes; failed writes attempt cleanup and show an error. Exports have unique filenames and are not deleted by automatic log retention.
+- No raw Termux files or credentials are read. Exported files contain diagnostic device/timing information and should be shared intentionally.
+- User reports delayed alarm reception and Termux notification on unlock without opening Scheduler. This is distinct from app-open recovery. No claim that this export change fixes alarm delivery or identifies the underlying OS cause.
+- Scheduling and Node claim behavior remain unchanged from 1.7-rc1. Prior physical-validation blockers remain open.
+
 # Reliability candidate 1.7-rc1 — changes and limits
 
 - Added source-audited root-cause matrix and architecture decision. Root cause of the physical phone's absent receiver evidence remains unknown.

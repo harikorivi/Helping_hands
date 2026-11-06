@@ -1,4 +1,16 @@
-# Interlink Scheduler 1.7-rc1 — validation candidate
+# Interlink Scheduler 1.7-rc2 — diagnostic file export
+
+[Download Interlink-Scheduler-1.7-rc2.apk](Interlink-Scheduler-1.7-rc2.apk). Install over the existing app; do not uninstall. Version code 9, package `ai.interlink.scheduler`, same signing identity. If already using the 1.7-rc1 Node source, this feature only needs the APK update; no login or Node change is needed.
+
+Use **Execution evidence → Save diagnostic log to Downloads**. Android 10+ saves a text log under **Downloads → Interlink Scheduler**; Android 8/9 uses the save picker. Share the file from File Manager. No storage permission, USB pairing or large clipboard paste is needed. Saved exports remain until manually deleted.
+
+This is an export update, **not a fix for delayed alarms on unlock**. Physical-device reliability remains unvalidated. [Installation guide](../../README-mobile.md) · [Validation](VALIDATION-1.7-rc2.md).
+
+SHA-256: `cd81371f7765c7aae61bb897efb23d6fb3734d064090e27fdfdf6b6eaec6eda8`.
+
+## Previous candidate and architecture evidence
+
+### Interlink Scheduler 1.7-rc1 — validation candidate
 
 Install [Interlink-Scheduler-1.7-rc1.apk](Interlink-Scheduler-1.7-rc1.apk) **with the matching current Node.js source**. Follow the [installation and upgrade guide](../../README-mobile.md). Working stored credentials do not require re-login.
 

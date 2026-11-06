@@ -18,6 +18,48 @@ import java.time.format.DateTimeFormatter
 /** Personal scheduler setup: every setting names its target app and reports its state. */
 class MainActivity : Activity() {
     private lateinit var content: LinearLayout
+    private var exportInProgress = false
+    private fun exportReport() {
+        if (exportInProgress) return
+        if (Build.VERSION.SDK_INT < 29) {
+            try {
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, DiagnosticExport.fileName())
+                }, 40)
+            } catch (_: RuntimeException) { explain("Cannot save report", "This phone has no available file picker. The copy buttons are still available.") }
+            return
+        }
+        saveReport(null)
+    }
+    private fun saveReport(destination: Uri?) {
+        if (exportInProgress) return
+        exportInProgress = true
+        Toast.makeText(this,"Saving diagnostic report…",Toast.LENGTH_SHORT).show()
+        val app = applicationContext
+        Thread {
+            val name = DiagnosticExport.fileName()
+            val message = try {
+                val report = DiagnosticExport.snapshot(app)
+                if (destination != null) DiagnosticExport.write(app,destination,report)
+                else if (Build.VERSION.SDK_INT >= 29) DiagnosticExport.saveToDownloads(app,name,report)
+                else throw java.io.IOException("No destination")
+                if (destination == null) "Saved to Downloads → Interlink Scheduler → $name. Open Files / File Manager to share this file."
+                else "Diagnostic report saved to your chosen location. Open Files / File Manager to share it."
+            } catch (error: Exception) {
+                "Could not save the report (${error.javaClass.simpleName}). Check available storage and try again."
+            }
+            runOnUiThread {
+                exportInProgress = false
+                if (!isFinishing && !isDestroyed) explain("Diagnostic export",message)
+            }
+        }.start()
+    }
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if (requestCode == 40 && resultCode == RESULT_OK) data?.data?.let { saveReport(it) }
+    }
     private val ink = Color.rgb(20, 42, 54)
     private val teal = Color.rgb(21, 94, 117)
     private val commandPermission = "com.termux.permission.RUN_COMMAND"
@@ -129,7 +171,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.7-rc1",13f)
+        text(titles,"Your Termux automation companion • v1.7-rc2",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -162,6 +204,8 @@ class MainActivity : Activity() {
         text(monitoring,"Battery Saver: ${state.optBoolean("batterySaver")} • Charging: ${state.opt("charging")}\nIdle: ${state.optBoolean("idle")} • Standby bucket: ${state.optInt("standbyBucket")}\nNetwork available: ${state.optBoolean("networkAvailable")} • Validated: ${state.optBoolean("networkValidated")}\nTermux installed: ${installed()} • Command permission: ${granted(commandPermission)}",14f)
         text(monitoring,p.getString("diagnosticError","").orEmpty(),14f,true)
         text(monitoring,Diagnostics.dashboard(this),14f)
+        button(monitoring,"Save diagnostic log to Downloads",true) { exportReport() }
+        text(monitoring,"Saves recent activity, device state, window results and structured events as one text log file. No tokens or Termux files are included. Saved copies stay in Downloads until you delete them.",13f)
         button(monitoring,"Copy structured execution report") {
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Execution evidence",Diagnostics.report(this)))
             Toast.makeText(this,"Structured report copied",Toast.LENGTH_SHORT).show()
@@ -254,7 +298,7 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.7-rc1\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.7-rc2\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
                 "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +
