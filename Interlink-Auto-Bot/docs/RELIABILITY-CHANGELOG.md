@@ -1,3 +1,11 @@
+# Optional continuous scheduler candidate 1.8-rc1
+
+- Adds a two-minute no-claim test of the same in-process timer; it records planned/fired events and delay and posts a result notification.
+- Adds a user-controlled Android foreground service with persistent notification and partial CPU wake lock. A planned in-process timer triggers the existing scheduled claim flow at the original daily start times. Existing exact alarms remain registered and duplicate/ledger guards remain authoritative.
+- Service can be stopped in app or from the notification; pausing schedule stops it. Requested versus actual running status is visible. Auto-restart is attempted after reboot/update and when opening the app, but OEM and force-stop limits remain.
+- Significant battery cost is intentional for this mode; it is off by default. No continuous Node/crond process.
+- Dedicated `specialUse` foreground-service declaration avoids the Android 15 dataSync six-hour limit for this scheduler use case. Distribution through Google Play would require service-use review. Physical device success and overnight battery impact remain unverified.
+
 # Alarm-clock comparison candidate 1.7-rc4
 
 - Added one explicit ten-minute, user-visible `setAlarmClock()` connection probe, with delivery notification, cancellation and separate method identification in the existing exported log.

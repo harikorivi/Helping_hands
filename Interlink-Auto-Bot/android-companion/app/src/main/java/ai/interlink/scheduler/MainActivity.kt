@@ -179,7 +179,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.7-rc4",13f)
+        text(titles,"Your Termux automation companion • v1.8-rc1",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -205,6 +205,33 @@ class MainActivity : Activity() {
                     Schedule.disable(this); render()
                 }.setNegativeButton("Keep enabled",null).show()
         }
+        val continuous=box(content)
+        text(continuous,"Continuous scheduling mode",18f,true)
+        val wanted=PersistentMonitorService.desired(this)
+        text(continuous,"Requested: $wanted • Service running now: ${PersistentMonitorService.active}",15f,true)
+        text(continuous,"Keeps a foreground notification and the CPU awake between runs. This can use significant battery. Android alarms stay registered; whichever trigger arrives first starts the existing claim workflow once. This mode cannot run after a true force-stop or guarantee survival if the phone kills the service.",13f)
+        if(!wanted) button(continuous,"Start continuous scheduling",true) {
+            if(!canRun || !enabled) explain("Enable schedule first","Complete setup and enable the six daily runs before starting continuous scheduling.")
+            else AlertDialog.Builder(this).setTitle("Keep CPU awake between runs?")
+                .setMessage("This keeps a visible foreground service and partial wake lock active until you stop it. Battery use will increase. Start continuous scheduling?")
+                .setPositiveButton("Start") { _, _ ->
+                    p.edit().putBoolean("continuousMonitor",true).commit()
+                    PersistentMonitorService.start(this,"user_enabled")
+                    render()
+                }.setNegativeButton("Cancel",null).show()
+        }
+        else button(continuous,"Test continuous timer • in 2 minutes") {
+            if(!PersistentMonitorService.active) explain("Service is not running","Start continuous scheduling before testing its timer.")
+            else {
+                PersistentMonitorService.scheduleProbe(this)
+                explain("Timer test scheduled","Lock the phone and leave it untouched for 3 minutes. The continuous service should post a test notification. No claim will be submitted. Save the diagnostic log after the test.")
+            }
+        }
+        if(wanted) button(continuous,"Stop continuous scheduling") {
+            PersistentMonitorService.stop(this)
+            render()
+        }
+        text(continuous,"The notification also has Stop monitoring. After reboot or app update, Android may reject automatic restart; open Scheduler to check the running status. The normal alarms remain scheduled.",13f)
         val monitoring=box(content)
         text(monitoring,"Execution evidence • validation candidate",18f,true)
         text(monitoring,"Not production-validated on long-idle or overnight physical-device runs. Unknown means no sufficient evidence, not a failed server claim.",13f)
@@ -335,7 +362,7 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.7-rc4\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.8-rc1\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
                 "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +

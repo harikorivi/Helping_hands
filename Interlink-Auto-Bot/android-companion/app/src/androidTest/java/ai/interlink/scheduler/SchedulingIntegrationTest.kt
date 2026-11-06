@@ -22,6 +22,30 @@ class SchedulingIntegrationTest {
         assertTrue("Grant SCHEDULE_EXACT_ALARM app-op in the emulator first",Schedule.allowed(c))
     }
     @After fun cleanup() { Schedule.disable(c); Schedule.prefs(c).edit().clear().commit() }
+    @Test fun continuousMonitorStartsWithWakeLockAndStopsCleanly() {
+        Schedule.recover(c,"fixture")
+        val scheduled=ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) }
+        Schedule.prefs(c).edit().putBoolean("continuousMonitor",true).commit()
+        PersistentMonitorService.start(c,"instrumentation")
+        val deadline=SystemClock.elapsedRealtime()+5000
+        while(!PersistentMonitorService.active && SystemClock.elapsedRealtime()<deadline) Thread.sleep(50)
+        assertTrue("Foreground monitor did not start",PersistentMonitorService.active)
+        while(!Diagnostics.report(c).contains("MONITOR_TIMER_PLANNED") && SystemClock.elapsedRealtime()<deadline) Thread.sleep(50)
+        val report=Diagnostics.report(c)
+        assertTrue(report.contains("MONITOR_WAKE_LOCK_ACQUIRED"))
+        assertTrue(report.contains("MONITOR_TIMER_PLANNED"))
+        assertEquals(scheduled,ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) })
+        PersistentMonitorService.scheduleProbe(c,2000)
+        val probeDeadline=SystemClock.elapsedRealtime()+8000
+        while(!Diagnostics.report(c).contains("MONITOR_TEST_TIMER_FIRED") && SystemClock.elapsedRealtime()<probeDeadline) Thread.sleep(50)
+        assertTrue("Continuous test timer did not fire",Diagnostics.report(c).contains("MONITOR_TEST_TIMER_FIRED"))
+        assertFalse("No claim service should start for a diagnostic timer",Schedule.prefs(c).contains("activeId"))
+        PersistentMonitorService.stop(c)
+        val stopDeadline=SystemClock.elapsedRealtime()+5000
+        while(PersistentMonitorService.active && SystemClock.elapsedRealtime()<stopDeadline) Thread.sleep(50)
+        assertFalse(PersistentMonitorService.active)
+        assertFalse(PersistentMonitorService.desired(c))
+    }
     @Test fun alarmClockProbeDuringForcedIdle() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testDoze") == "true")
         val automation=InstrumentationRegistry.getInstrumentation().uiAutomation

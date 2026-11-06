@@ -1,4 +1,24 @@
-# Interlink Scheduler 1.7-rc4 — alarm-clock comparison
+# Interlink Scheduler 1.8-rc1 — optional continuous scheduling
+
+[Download Interlink-Scheduler-1.8-rc1.apk](Interlink-Scheduler-1.8-rc1.apk). Install over the existing app; do not uninstall. Version code 12, same package/signing identity. If your Termux source is already 1.7-rc1 or newer, no Node update or re-login is needed.
+
+Open the app, ensure the six daily schedule is enabled, then tap **Start continuous scheduling**. Confirm the battery cost. Keep the ongoing notification. It holds a CPU wake lock and runs a timer in the Android foreground service, so this mode uses more battery. Tap **Test continuous timer • in 2 minutes** for a no-claim locked-screen check, then save the diagnostic log to Downloads. Stop monitoring in the app or from its notification. Normal Android alarms remain registered; original deadlines and duplicate guards still apply.
+
+This is a phone validation candidate. Emulator tests pass, but the affected vivo/Funtouch phone has not yet demonstrated a locked-screen scheduled run with the mode enabled. Android force-stop and OEM termination can still prevent execution. [Instructions](../../README-mobile.md) · [Validation](VALIDATION-1.8-rc1.md).
+
+SHA-256: `ddba3ff488d18b3fcade238bcc027283c3ea7ca31d06ea0326201c3c74f37c4f`.
+
+# Interlink Scheduler 1.8-rc1 — optional continuous scheduling
+
+[Download Interlink-Scheduler-1.8-rc1.apk](Interlink-Scheduler-1.8-rc1.apk). Install over the existing app; do not uninstall. Version code 12, same package/signing identity. If your Termux source is already 1.7-rc1 or newer, no Node update or re-login is needed.
+
+Open the app, ensure the six daily schedule is enabled, then tap **Start continuous scheduling**. Confirm the battery cost. Keep the ongoing notification. It holds a CPU wake lock and runs a timer in the Android foreground service, so this mode uses more battery. Stop it in the app or from **Stop monitoring** in the notification. Regular Android alarms remain registered, and original deadlines plus duplicate guards still apply.
+
+This is a phone validation candidate. Emulator tests pass, but the affected vivo/Funtouch phone has not yet demonstrated a locked-screen scheduled run with the mode enabled. Android force-stop and OEM termination can still prevent execution. [Instructions](../../README-mobile.md) · [Validation](VALIDATION-1.8-rc1.md).
+
+SHA-256: `2350ad608e5f4f78bd8fe98b4c4a8a1486a30d73ca048d1eec9b4c61a6e6c23e`.
+
+## Previous comparison candidate 1.7-rc4
 
 [Download Interlink-Scheduler-1.7-rc4.apk](Interlink-Scheduler-1.7-rc4.apk). Install over the existing app. Version code 11, same package and signing identity. No Node update or login needed when already on the 1.7-rc1 Node source.
 

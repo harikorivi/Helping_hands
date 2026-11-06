@@ -54,7 +54,7 @@ object Schedule {
         for (hour in ExecutionPolicy.hours) {
             val expected = p.getLong("alarm:$hour",0)
             if (expected > 0 && expected <= now && p.getLong("delivered:$hour",0) != expected) {
-                if (ExecutionPolicy.inWindow(expected,now) && source in listOf("app opened","manual repair")) {
+                if (ExecutionPolicy.inWindow(expected,now) && source in listOf("app opened","manual repair","monitor restart")) {
                     Diagnostics.emit(c,"RECOVERY_ATTEMPTED",expected,status="within_original_window",reason=source)
                     record(c,"Recovering remaining windows during $source: intended ${time(expected)}; checked ${time(now)}. Original deadline retained; this is not alarm delivery.")
                     AlarmReceiver().receive(c,Intent(c,AlarmReceiver::class.java).setAction(ACTION)
@@ -79,6 +79,7 @@ object Schedule {
             p.edit().putInt("planVersion",2).putString("planZone",ZoneId.systemDefault().id).commit()
             updateNext(c)
             record(c,"Six independent alarms registered ($source). Next: ${time(p.getLong("next",0))}.")
+            PersistentMonitorService.refresh(c)
         } catch (_: SecurityException) { record(c,"Alarm registration rejected. Check exact-alarm permission.") }
     }
     @Synchronized
@@ -99,12 +100,14 @@ object Schedule {
         if (!p.getBoolean("enabled",false)) return
         if (p.getInt("planVersion",0) != 2 || p.getString("planZone","") != ZoneId.systemDefault().id ||
             ExecutionPolicy.hours.any { p.getLong("alarm:$it",0) <= System.currentTimeMillis() }) recover(c,"app opened")
+        if (PersistentMonitorService.desired(c) && !PersistentMonitorService.active) PersistentMonitorService.start(c,"app_opened")
     }
     fun rearmDelivered(c: Context, hour: Int) {
         try { if (allowed(c)) { armHour(c,hour); updateNext(c) } }
         catch (_: SecurityException) { record(c,"Could not rearm hour $hour. Exact-alarm permission changed.") }
     }
     fun disable(c: Context) {
+        PersistentMonitorService.stop(c)
         prefs(c).edit().putBoolean("enabled",false).remove("next").commit()
         cancelLegacy(c)
         BackgroundTest.cancel(c)
@@ -123,6 +126,7 @@ class RecoveryReceiver : BroadcastReceiver() {
             else -> return
         }
         Schedule.recover(c,source)
+        if(PersistentMonitorService.desired(c)) PersistentMonitorService.start(c,source)
     }
 }
 class AlarmReceiver : BroadcastReceiver() {
@@ -145,11 +149,15 @@ class AlarmReceiver : BroadcastReceiver() {
         }
         p.edit().putLong("delivered:$hour",expected).commit()
         val recovery = i.getBooleanExtra("recovery",false)
+        if(i.getBooleanExtra("monitor",false)) {
+            Diagnostics.emit(c,"MONITOR_SLOT_ACCEPTED",expected,status="delivered_by_monitor",reason="continuous_clock")
+            Diagnostics.outcome(c,expected,"received_monitor","continuous_monitor_triggered")
+        }
         if(!recovery) {
             Diagnostics.emit(c,"ALARM_RECEIVED",expected,status="delivered",details=JSONObject().put("delayMs",actual-expected),actual=actual)
             Diagnostics.outcome(c,expected,"received","",delivered=actual)
         }
-        Schedule.record(c,"${if (recovery) "Foreground recovery accepted" else "Alarm delivered"}: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; delay ${(actual-expected)/1000}s.")
+        Schedule.record(c,"${if (i.getBooleanExtra("monitor",false)) "Continuous monitor triggered" else if (recovery) "Foreground recovery accepted" else "Alarm delivered"}: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; delay ${(actual-expected)/1000}s.")
         Schedule.rearmDelivered(c,hour) // Only this slot: do not replace other pending deliveries.
         if (!ExecutionPolicy.inWindow(expected,actual)) {
             Diagnostics.emit(c,"EXECUTION_FAILED",expected,status="skipped",reason="outside_original_window"); Diagnostics.outcome(c,expected,"failed","outside_original_window");
