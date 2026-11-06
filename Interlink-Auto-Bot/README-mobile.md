@@ -314,3 +314,7 @@ Opening or manually repairing an enabled schedule during its original :26–:34 
 **Known limitation:** the missing alarm on the reported iQOO 7/Funtouch OS 14 has not been reproduced conclusively on that device. Version 1.6 fixes foreground recovery and adds diagnostics; it does not claim to cure manufacturer-specific suppression or force-stop behavior.
 
 Existing users: pause the schedule, let an active run finish, update the repository and install the 1.6 APK over the existing app. Open it and repair the schedule. If Git reports local patch conflicts, preserve them with `git stash push --include-untracked -m "Phone backup before update"`, then `git pull --ff-only`; do not reapply old patches automatically. Keep the stash as a backup. Credentials ignored by Git remain in place; no new login is required if they still work.
+
+### When USB and wireless debugging are unavailable
+
+Use the separate [Alarm Delivery Check app](android-companion/alarm-diagnostics/README.md). Its offline two-minute/ten-minute tests record actual receiver delivery and app-opening times, then provide a copyable report. It needs no network or Termux access and makes no claims. It tests its own alarms, not another app's private state, so results must be compared with the scheduler's diagnostics.

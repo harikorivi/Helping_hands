@@ -22,3 +22,7 @@ e50daab7c7fe3ff6f0dc98a6b175d861305923cd42ba19090a2a504db5484ba9
 ```
 
 Use the same private signing key for compatible updates; never commit keys. Older APKs are historical releases.
+
+## Separate offline diagnostic app
+
+[Alarm-Delivery-Check-1.0.apk](Alarm-Delivery-Check-1.0.apk) installs alongside the scheduler and needs no USB/network pairing, Termux or account. It tests its own alarm delivery and copies a report for manual sharing. It cannot read privileged system logs or another app's private state. See [instructions](../alarm-diagnostics/README.md) and [validation](VALIDATION-ALARM-CHECK-1.0.md).
