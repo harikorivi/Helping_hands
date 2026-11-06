@@ -1,15 +1,23 @@
-# Interlink Scheduler 1.3
+# Interlink Scheduler 1.4
 
-Install [Interlink-Scheduler-1.3.apk](Interlink-Scheduler-1.3.apk) with the Node.js source from this same repository version. Follow the [first-time installation guide](../../README-mobile.md).
+Install [Interlink-Scheduler-1.4.apk](Interlink-Scheduler-1.4.apk) together with the current Node.js source. Follow the [installation and upgrade guide](../../README-mobile.md). Both components must be updated from 1.3; no re-login is required if existing credentials still work.
 
-Personal debug-signed build, package `ai.interlink.scheduler`, version code 4, Android 8 minimum. It contains the guided setup, teal launcher icon, connection test and confirmed single-claim controls. Credentials stay in Termux and are not bundled in the APK.
+Personal debug-signed APK, package `ai.interlink.scheduler`, version code 5, Android 8 minimum. Credentials remain in Termux and are not bundled.
 
-Built with JDK 17, SDK 35, Gradle 8.11.1, AGP 8.7.3 and Kotlin 2.0.21. Build and lint passed (0 errors, 15 warnings); APK signature verification passed. The Node.js suite passed 19 tests. Emulator UI inspection does not establish physical-phone background reliability.
+Changes:
+
+- Six independent daily alarm slots, with recovery after reboot/update/time changes.
+- Suspend-aware Node clock, original-window checks, and resumed deadline handling.
+- Separate connection-test, manual-claim and scheduled-run messages.
+- Intended and actual alarm times, late-callback isolation and copyable diagnostic history.
+- Explicit battery-exemption prerequisites and wrapper-entry/busy logging.
+
+Built with JDK 17, SDK 35, Gradle 8.11.1, AGP 8.7.3 and Kotlin 2.0.21. Build and lint passed (0 errors, 20 warnings); signature verification passed. Tests and limitations are documented in [VALIDATION-1.4.md](VALIDATION-1.4.md).
 
 SHA-256:
 
 ```text
-c87a448b5d0aa745c7e671e27f48176ad9ff594fea6cd2b066e991b677afcb62
+55e4fcddd6e0a77e3a8f4a753e2749caef736ed04c6f4018af843ae732db44c6
 ```
 
-Rebuilds intended to update this APK must use the same private signing key. Do not commit signing keys or credentials. A production distribution should use an appropriately managed release signing key.
+Use the same private signing key for compatible updates; never commit keys. Older APKs retained in this directory are historical versions, not the recommended installation.

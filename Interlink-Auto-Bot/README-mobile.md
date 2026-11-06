@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 1.3** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 1.4** for a new user. Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-1.3.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.3.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-1.4.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.4.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.3.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.4.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -120,7 +120,7 @@ Tap each button **once**. Return to the app after changing an Android setting; s
 
 For a separate battery-optimization list, tap **Open battery optimization list**, select **All apps** if needed, and choose **Don't optimize** for **both Interlink Scheduler and Termux**. Do not select the official Interlink app for these settings.
 
-Some phones also require Auto-start permission or an additional background-activity setting. The app reports Android's optimization exemption status but cannot verify every manufacturer's settings. Settings links open the named app's App info with guidance; if a shortcut is unavailable, navigate through Android Settings → Apps manually.
+Some phones also require Auto-start permission or an additional background-activity setting. Automatic scheduling requires Android battery-optimization exemptions for both apps; the Enable/repair button explains any missing prerequisite. Manufacturer-specific restrictions still need checking separately. Settings links open the named app's App info with guidance; if a shortcut is unavailable, navigate through Android Settings → Apps manually.
 
 ## 7. Test the installation immediately
 
@@ -177,7 +177,7 @@ Look for both `WINDOW_1_*` and `WINDOW_2_*` results:
 - `NOT_ELIGIBLE`: the server did not report eligibility during the checks.
 - `FAILED`: inspect the reason. An uncertain submission may have been accepted by the server and must not be blindly retried.
 
-The scheduled maximum is 12 successful claims per day, subject to eligibility and actual execution. The `logs` directory is created when an execution wrapper starts, not by the tests. An app message saying a command was sent is not proof that a claim succeeded. Old pause events in Recent activity are history; the top card shows current status.
+The scheduled maximum is 12 successful claims per day, subject to eligibility and actual execution. The `logs` directory is created when an execution wrapper starts, not by the tests. An app message saying a command was sent is not proof that a claim succeeded. Old pause events in Recent activity are history; the top card shows current status. Each alarm now records intended time, actual delivery time and delay. Tests, manual claims and scheduled runs have different completion messages. Use **Copy diagnostic history** to copy the retained history and all six registered alarm times without tokens.
 
 ## Optional: submit one real claim now
 
@@ -225,8 +225,9 @@ bash setup-termux.sh
 
 If Git reports local changes or conflicts, stop and preserve those changes before resolving them. Do not use a hard reset or delete the checkout: it may contain your credentials. Earlier manually copied fixes can cause such conflicts.
 
-3. Install the current repository APK over the old app using **Update**, without uninstalling first. Updates require a matching signing key; if Android reports a signature mismatch, resolve that before proceeding.
-4. Run **Test connection now • no claim**, then enable/repair the schedule. Only reauthenticate if your stored credentials cannot refresh.
+3. For the reliability update from 1.3 or earlier, **both the Termux source and the APK must be updated**. The fix replaces a suspend-sensitive clock comparison and changes single chained alarms to six independent daily slots. Stored credentials and claim ledgers are preserved. Late delivery never creates a catch-up claim, and delayed completion events identify their original run.
+4. Install the current repository APK over the old app using **Update**, without uninstalling first. Updates require a matching signing key; if Android reports a signature mismatch, resolve that before proceeding.
+5. Run **Test connection now • no claim**, then enable/repair the schedule. Only reauthenticate if your stored credentials cannot refresh.
 
 ### Only if migrating from the old cron setup
 
@@ -263,9 +264,21 @@ cd Interlink-Auto-Bot/android-companion
 ```
 
 ```sh
-gradle --no-daemon :app:assembleDebug :app:lintDebug
+gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
 The output is `app/build/outputs/apk/debug/app-debug.apk`. Verify its signature with the SDK's `apksigner` before distributing it. Keep a consistent private signing key for updates; never commit that key. The published personal build is debug-signed. Android UI and settings navigation have been inspected in an emulator; end-to-end background claims on the user's physical phone still require the acceptance checks.
 
 See [ANDROID-ARCHITECTURE.md](ANDROID-ARCHITECTURE.md) for the architecture review, security model, file responsibilities, alternatives, and testing matrix.
+
+## Reliability behavior in 1.4
+
+All six daily alarm slots are registered with Android at once; delivery of one alarm is not required to register the next slot. Each delivered slot rearms its own next-day occurrence. Reboot, app update, clock/timezone changes and reopening an overdue schedule rebuild future alarms. Recovery logs are explicitly different from alarm-delivery logs. Duplicate or replaced alarm intents do not launch another command.
+
+The Node runtime uses a Linux/Android suspend-aware uptime source instead of `performance.now()` when detecting real clock changes. It checks the original wall-clock window before every HTTP request and on each resumed wait. It no longer represents a clock problem as infinite time or falsely labels a future window missed. Real clock/timezone changes receive a specific failure reason.
+
+The companion checks both wall-clock and Android elapsed-realtime deadlines. If Android suspends the process, it cleans up on the first available callback after resume; it cannot execute cleanup while the OS refuses CPU time. The Node runner independently refuses late requests. An in-flight request may already have been accepted by the server and is never blindly retried. A missing callback does not block future alarms; delayed callbacks cannot terminate a newer run.
+
+`run-scheduled.sh` logs entry before checking the execution lock. A busy lock returns a distinct non-success result. The log therefore distinguishes a wrapper that started but was busy from a command that never reached Termux. The intended alarm timestamp travels through the wrapper, preventing a very late command from being treated as a fresh scheduled window.
+
+Emulator and simulated-clock tests improve confidence but do not guarantee OEM overnight behavior. After upgrading, verify one locked-screen scheduled execution and use **Copy diagnostic history** if it fails. Never force-stop either app.

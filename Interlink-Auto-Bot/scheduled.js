@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { setTimeout: delay } = require('node:timers/promises');
+const { createClock, boundedSleep } = require('./lib/execution-clock');
 const { atomicWrite, readJson } = require('./lib/storage');
 const { slotsFor, confirmed } = require('./lib/windows');
 const { failureDetails } = require('./lib/diagnostics');
@@ -19,6 +19,7 @@ async function executeWindow(slot, state, deps) {
     if (!state.result) finish('FAILED', 'previous_submission_outcome_unknown');
     return;
   }
+  log('WINDOW_STARTED', { key: slot.key, start: new Date(slot.start).toISOString(), end: new Date(slot.end).toISOString() });
   if (now() < slot.start) await sleep(slot.start - now());
   if (now() >= slot.end) { finish('FAILED', 'missed_window'); return; }
   let notEligible = false;
@@ -63,6 +64,7 @@ async function executeWindow(slot, state, deps) {
       } catch { log('POST_CLAIM_FOLLOWUP_FAILED', { key: slot.key }); }
       return;
     } catch (e) {
+      if (e.code === 'CLOCK_CHANGED') throw e;
       log('REQUEST_FAILED', { key: slot.key, ...failureDetails(e, stage) });
       if (state.submitted) { finish('FAILED', 'submission_outcome_unknown'); return; }
       const status = e.response?.status;
@@ -80,8 +82,15 @@ async function executeWindow(slot, state, deps) {
 
 async function main() {
   process.umask(0o077);
-  const slots = slotsFor(Date.now());
-  if (!slots.length) { log('OUTSIDE_SCHEDULE'); return; }
+  const actual = Date.now();
+  const argument = process.argv.indexOf('--scheduled-at');
+  const expected = argument < 0 ? actual : Number(process.argv[argument + 1]);
+  log('SCHEDULED_RUN_STARTED', { expected: Number.isFinite(expected) ? new Date(expected).toISOString() : null,
+    actual: new Date(actual).toISOString(), delayMs: actual - expected });
+  const slots = Number.isFinite(expected) ? slotsFor(expected) : [];
+  if (!slots.length || actual < slots[0].start || actual >= slots[1].end) {
+    log('SCHEDULED_RUN_SKIPPED', { reason: 'outside_original_window' }); process.exitCode = 20; return;
+  }
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const file = path.join(root, 'state.json');
   const states = readJson(file, {}); // Corruption is fatal; never reset the claim ledger silently.
@@ -97,24 +106,24 @@ async function main() {
   for (const slot of slots) states[slot.key] ||= { started: new Date().toISOString() };
   persist();
   const controller = new AbortController();
-  const startWall = Date.now(), startMono = performance.now();
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const clockValid = () => Math.abs(Date.now()-startWall-(performance.now()-startMono)) < 5000 &&
-    Intl.DateTimeFormat().resolvedOptions().timeZone === zone;
-  const now = () => clockValid() ? Date.now() : Infinity;
+  const clock = createClock();
+  const now = clock.now;
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => controller.abort());
-  const watchdog = setTimeout(() => {
+  const watchdog = setInterval(() => {
+    let reason = 'execution_deadline';
+    try { if (now() < slots[1].end) return; }
+    catch { reason = 'clock_or_timezone_changed'; }
     controller.abort();
     for (const slot of slots) {
       const state = states[slot.key] ||= {};
       if (!state.result) {
-        Object.assign(state, { result: `WINDOW_${slot.number}_FAILED`, reason: 'execution_deadline' });
+        Object.assign(state, { result: `WINDOW_${slot.number}_FAILED`, reason });
         log(state.result, { key: slot.key, reason: state.reason });
       }
     }
     try { persist(); } finally { process.exit(2); }
-  }, Math.max(1, slots[1].end - Date.now()));
-  const sleep = ms => delay(ms, undefined, { signal: controller.signal });
+  }, 1000);
+  const sleep = ms => boundedSleep(ms, now, controller.signal);
   try {
     const auth = require('./index');
     for (const name of ['token.txt', 'refresh_token.txt', 'device.txt', 'credentials.json']) {
@@ -124,6 +133,11 @@ async function main() {
       makeClient: (...args) => {
         const client = auth.makeClient(...args);
         client.defaults.signal = controller.signal;
+        client.interceptors.request.use(config => {
+          const remaining = slots[1].end - now();
+          if (remaining <= 0) throw Object.assign(new Error('deadline'), { code: 'EXECUTION_DEADLINE' });
+          config.timeout = Math.max(1, Math.min(10000, remaining)); return config;
+        });
         return client;
       }
     });
@@ -152,10 +166,10 @@ async function main() {
         }
       };
       try { await executeWindow(slot, state, deps); }
-      catch { Object.assign(state, { result: `WINDOW_${slot.number}_FAILED`, reason: 'interrupted' }); persist(); log(state.result, { key: slot.key, reason: state.reason }); }
+      catch (error) { Object.assign(state, { result: `WINDOW_${slot.number}_FAILED`, reason: error.code === 'CLOCK_CHANGED' ? 'clock_or_timezone_changed' : 'interrupted' }); persist(); log(state.result, { key: slot.key, reason: state.reason }); }
     }
     if (slots.some(s => states[s.key].result !== `WINDOW_${s.number}_SUCCESS`)) process.exitCode = 2;
-  } finally { clearTimeout(watchdog); controller.abort(); }
+  } finally { clearInterval(watchdog); controller.abort(); }
 }
 module.exports = { executeWindow };
 if (require.main === module) main().catch(() => { log('FATAL', { reason: 'local_state_or_runtime_failure' }); process.exitCode = 1; });

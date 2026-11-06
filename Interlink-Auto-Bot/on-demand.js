@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { setTimeout: sleep } = require('node:timers/promises');
+const { createClock, boundedSleep } = require('./lib/execution-clock');
 const { atomicWrite, readJson } = require('./lib/storage');
 const { failureDetails } = require('./lib/diagnostics');
 const { parseEligibility, responseShape } = require('./lib/eligibility');
@@ -76,14 +77,26 @@ async function main(mode) {
     const file = path.join(__dirname,name); if (fs.existsSync(file)) fs.chmodSync(file,0o600);
   }
   const controller = new AbortController();
-  const deadline = setTimeout(() => { controller.abort(); log('ON_DEMAND_TIMEOUT'); process.exit(124); }, mode === 'test' ? 45000 : 95000);
+  const clock = createClock();
+  const end = clock.started + (mode === 'test' ? 45000 : 95000);
+  const deadline = setInterval(() => {
+    try { if (clock.now() < end) return; } catch { log('CLOCK_OR_TIMEZONE_CHANGED'); }
+    controller.abort(); log('ON_DEMAND_TIMEOUT'); process.exit(124);
+  }, 1000);
   for (const signal of ['SIGTERM','SIGINT']) process.once(signal, () => controller.abort());
   try {
     const session = auth.createSession(auth.readToken(),auth.readRefreshToken(),auth.readDevice(),[], {
-      makeClient: (...args) => { const api = auth.makeClient(...args); api.defaults.signal = controller.signal; return api; }
+      makeClient: (...args) => {
+        const api = auth.makeClient(...args); api.defaults.signal = controller.signal;
+        api.interceptors.request.use(config => {
+          const remaining = end - clock.now();
+          if (remaining <= 0) throw new Error('deadline');
+          config.timeout = Math.max(1, Math.min(10000, remaining)); return config;
+        }); return api;
+      }
     });
-    return mode === 'test' ? await diagnose(session) : await claimOnce(session);
-  } finally { clearTimeout(deadline); controller.abort(); }
+    return mode === 'test' ? await diagnose(session) : await claimOnce(session, clock.now, { sleep: ms => boundedSleep(ms, clock.now, controller.signal) });
+  } finally { clearInterval(deadline); controller.abort(); }
 }
 module.exports = { diagnose, chooseManualSlot, claimOnce };
 if (require.main === module) main(process.argv[2]).then(code => { process.exitCode = code; }).catch(() => { log('ON_DEMAND_FAILED'); process.exitCode = 12; });

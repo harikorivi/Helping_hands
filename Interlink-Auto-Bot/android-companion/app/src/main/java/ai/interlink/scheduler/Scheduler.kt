@@ -1,14 +1,12 @@
 package ai.interlink.scheduler
 
-import android.Manifest
 import android.app.*
 import android.content.*
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.*
-import android.provider.Settings
-import android.widget.*
 import java.time.*
+import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 object Schedule {
     const val ACTION = "ai.interlink.scheduler.RUN"
@@ -16,133 +14,195 @@ object Schedule {
     fun prefs(c: Context) = c.getSharedPreferences("schedule", Context.MODE_PRIVATE)
     fun manager(c: Context) = c.getSystemService(AlarmManager::class.java)
     fun allowed(c: Context) = Build.VERSION.SDK_INT < 31 || manager(c).canScheduleExactAlarms()
-    fun pending(c: Context, time: Long = 0): PendingIntent = PendingIntent.getBroadcast(c, 1,
-        Intent(c, AlarmReceiver::class.java).setAction(ACTION).putExtra("scheduled", time),
+    fun time(epoch: Long) = Instant.ofEpochMilli(epoch).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMM h:mm:ss a z"))
+    fun pending(c: Context, hour: Int, time: Long = 0): PendingIntent = PendingIntent.getBroadcast(c, 100 + hour,
+        Intent(c,AlarmReceiver::class.java).setAction(ACTION).putExtra("hour",hour).putExtra("scheduled",time),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    private fun cancelLegacy(c: Context) {
+        val old = PendingIntent.getBroadcast(c,1,Intent(c,AlarmReceiver::class.java).setAction(ACTION),PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE)
+        if (old != null) { manager(c).cancel(old); old.cancel() }
+    }
     fun record(c: Context, message: String) {
         val p = prefs(c)
-        val lines = (p.getString("events", "") + "\n" + Instant.now() + " " + message).lines().takeLast(50)
-        p.edit().putString("events", lines.joinToString("\n")).commit()
+        val lines = (p.getString("events", "") + "\n" + Instant.now() + " " + message).lines().takeLast(100)
+        p.edit().putString("events",lines.joinToString("\n")).commit()
     }
-    fun arm(c: Context) {
+    private fun updateNext(c: Context) {
         val p = prefs(c)
-        if (!p.getBoolean("enabled", false)) return
-        if (!allowed(c)) { record(c, "EXACT_ALARM_PERMISSION_REQUIRED"); return }
-        val now = ZonedDateTime.now()
-        val next = (0L..2L).flatMap { day -> listOf(1,5,9,13,17,21).map { hour ->
-            now.toLocalDate().plusDays(day).atTime(hour,26).atZone(now.zone)
-        }}.filter { it.isAfter(now) }.minBy { it.toInstant() }.toInstant().toEpochMilli()
-        try {
-            manager(c).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, pending(c,next))
-            p.edit().putLong("next", next).commit()
-        } catch (_: SecurityException) { record(c, "ALARM_PERMISSION_REVOKED") }
+        val next = ExecutionPolicy.hours.map { p.getLong("alarm:$it",0) }.filter { it > 0 }.minOrNull() ?: 0
+        p.edit().putLong("next",next).commit()
     }
-    fun recover(c: Context) {
-        val expected = prefs(c).getLong("next", 0)
-        if (expected > 0 && expected < System.currentTimeMillis()) record(c, "MISSED_SCHEDULE since=$expected; no catch-up claims")
-        arm(c)
+    private fun armHour(c: Context, hour: Int) {
+        val next = ExecutionPolicy.next(hour,ZonedDateTime.now())
+        manager(c).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,next,pending(c,hour,next))
+        prefs(c).edit().putLong("alarm:$hour",next).commit()
+    }
+    fun recover(c: Context, source: String = "manual repair") {
+        val p = prefs(c)
+        if (!p.getBoolean("enabled",false)) return
+        cancelLegacy(c)
+        if (!allowed(c)) { record(c,"Exact-alarm permission missing. Open Alarms & reminders and repair schedule."); return }
+        val now = System.currentTimeMillis()
+        for (hour in ExecutionPolicy.hours) {
+            val expected = p.getLong("alarm:$hour",0)
+            if (expected > 0 && expected <= now && p.getLong("delivered:$hour",0) != expected) {
+                record(c,"Overdue alarm detected during $source: intended ${time(expected)}; checked ${time(now)}. This is recovery, not proof of alarm delivery. No catch-up claim.")
+            }
+        }
+        try {
+            for (hour in ExecutionPolicy.hours) armHour(c,hour)
+            p.edit().putInt("planVersion",2).putString("planZone",ZoneId.systemDefault().id).commit()
+            updateNext(c)
+            record(c,"Six independent alarms registered ($source). Next: ${time(p.getLong("next",0))}.")
+        } catch (_: SecurityException) { record(c,"Alarm registration rejected. Check exact-alarm permission.") }
+    }
+    fun checkOnOpen(c: Context) {
+        val p = prefs(c)
+        if (!p.getBoolean("enabled",false)) return
+        if (p.getInt("planVersion",0) != 2 || p.getString("planZone","") != ZoneId.systemDefault().id ||
+            ExecutionPolicy.hours.any { p.getLong("alarm:$it",0) <= System.currentTimeMillis() }) recover(c,"app opened")
+    }
+    fun rearmDelivered(c: Context, hour: Int) {
+        try { if (allowed(c)) { armHour(c,hour); updateNext(c) } }
+        catch (_: SecurityException) { record(c,"Could not rearm hour $hour. Exact-alarm permission changed.") }
+    }
+    fun disable(c: Context) {
+        prefs(c).edit().putBoolean("enabled",false).remove("next").commit()
+        cancelLegacy(c)
+        for (hour in ExecutionPolicy.hours) { manager(c).cancel(pending(c,hour)); prefs(c).edit().remove("alarm:$hour").commit() }
+        record(c,"Schedule paused. Current execution, if any, may finish.")
     }
 }
-
 class RecoveryReceiver : BroadcastReceiver() {
-    override fun onReceive(c: Context, i: Intent) { Schedule.recover(c) }
+    override fun onReceive(c: Context, i: Intent) {
+        val source = when(i.action) {
+            Intent.ACTION_BOOT_COMPLETED -> "reboot"
+            Intent.ACTION_MY_PACKAGE_REPLACED -> "app update"
+            Intent.ACTION_TIME_CHANGED -> "clock change"
+            Intent.ACTION_TIMEZONE_CHANGED -> "timezone change"
+            AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED -> "alarm permission granted"
+            else -> return
+        }
+        Schedule.recover(c,source)
+    }
 }
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
-        if (!Schedule.prefs(c).getBoolean("enabled", false)) return
-        val scheduled = i.getLongExtra("scheduled", 0)
-        Schedule.arm(c) // Persist next alarm before handoff, including on a failed launch.
-        val now = System.currentTimeMillis()
-        if (scheduled <= 0 || now < scheduled || now >= scheduled + 480_000) {
-            Schedule.record(c,"MISSED_SCHEDULE"); return
+        if (i.action != Schedule.ACTION) return
+        val p = Schedule.prefs(c)
+        if (!p.getBoolean("enabled",false)) return
+        val hour = i.getIntExtra("hour",-1)
+        val expected = i.getLongExtra("scheduled",0)
+        if (hour !in ExecutionPolicy.hours || expected <= 0) { Schedule.recover(c,"legacy alarm migration"); return }
+        val actual = System.currentTimeMillis()
+        if (p.getLong("delivered:$hour",0) == expected || p.getLong("alarm:$hour",0) != expected) {
+            Schedule.record(c,"Duplicate or replaced alarm ignored: intended ${Schedule.time(expected)}."); return
         }
-        try {
-            c.startForegroundService(Intent(c, RunService::class.java).putExtra("scheduled", scheduled))
-        } catch (_: RuntimeException) { Schedule.record(c,"BACKGROUND_START_REJECTED") }
+        p.edit().putLong("delivered:$hour",expected).commit()
+        Schedule.record(c,"Alarm delivered: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; delay ${(actual-expected)/1000}s.")
+        Schedule.rearmDelivered(c,hour) // Only this slot: do not replace other pending deliveries.
+        if (!ExecutionPolicy.inWindow(expected,actual)) {
+            Schedule.record(c,"Late/early alarm skipped. Intended ${Schedule.time(expected)}; delivery ${Schedule.time(actual)}. No claim launched."); return
+        }
+        try { c.startForegroundService(Intent(c,RunService::class.java).putExtra("scheduled",expected).putExtra("mode","scheduled")) }
+        catch (_: RuntimeException) { Schedule.record(c,"Android rejected the scheduled service start for ${Schedule.time(expected)}. Check background restrictions.") }
     }
 }
 
 class RunService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var lock: PowerManager.WakeLock? = null
-    private var running = false
+    private var runId: String? = null
+    private var wallDeadline = 0L
+    private var elapsedDeadline = 0L
+    private var mode = "scheduled"
+    private fun expired() = ExecutionPolicy.expired(System.currentTimeMillis(),SystemClock.elapsedRealtime(),wallDeadline,elapsedDeadline)
+    private fun expire() {
+        Schedule.record(this,"${ExecutionPolicy.label(mode)} deadline reached: intended stop ${Schedule.time(wallDeadline)}; handled ${Schedule.time(System.currentTimeMillis())}. Termux must stop further requests on resume.")
+        if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Execution deadline reached. Check the on-demand log; submitted claims may be uncertain.").commit()
+        cleanup()
+    }
+    private val tick = object : Runnable {
+        override fun run() { if (expired()) { expire(); stopSelf() } else handler.postDelayed(this,1000) }
+    }
     override fun onBind(i: Intent?) = null
     override fun onStartCommand(i: Intent?, flags: Int, startId: Int): Int {
-        if (running) { Schedule.record(this,"EXECUTION_BUSY"); return START_NOT_STICKY }
-        val scheduled = i?.getLongExtra("scheduled", 0) ?: 0
-        val mode = i?.getStringExtra("mode")?.takeIf { it == "test" || it == "claim" } ?: "scheduled"
-        val remaining = scheduled + (if (mode == "scheduled") 480_000 else 120_000) - System.currentTimeMillis()
+        if (runId != null) {
+            if (expired()) expire()
+            else { Schedule.record(this,"Execution busy: ${ExecutionPolicy.label(mode)} already active; duplicate launch skipped."); return START_NOT_STICKY }
+        }
+        val expected = i?.getLongExtra("scheduled",0) ?: 0
+        mode = i?.getStringExtra("mode")?.takeIf { it == "test" || it == "claim" } ?: "scheduled"
+        val actual = System.currentTimeMillis()
+        wallDeadline = expected + if (mode == "scheduled") 480_000 else 120_000
+        val remaining = wallDeadline - actual
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(Schedule.CHANNEL,"Scheduled claims",NotificationManager.IMPORTANCE_LOW))
-        val open = PendingIntent.getActivity(this,0,Intent(this, MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
-        startForeground(1, Notification.Builder(this,Schedule.CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_popup_sync).setContentTitle(if (mode == "test") "Testing Termux connection" else if (mode == "claim") "Checking one eligible claim" else "Interlink scheduled execution")
-            .setContentText(if (mode == "scheduled") "Two claim windows; stops by minute 34" else "On-demand action; stops within two minutes").setContentIntent(open).build())
-        if (remaining !in 1..480_000) { stopSelf(); return START_NOT_STICKY }
-        running = true
-        Schedule.prefs(this).edit().putLong("active",scheduled).putString("activeMode",mode).commit()
-        lock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Interlink:execution")
-        lock!!.acquire(remaining)
-        handler.postDelayed({
-            if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Timed out. Check the Termux on-demand log; a submitted claim may have an unknown outcome.").commit()
-            Schedule.record(this,"EXECUTION_DEADLINE"); stopSelf()
-        },remaining)
+        nm.createNotificationChannel(NotificationChannel(Schedule.CHANNEL,"Executions",NotificationManager.IMPORTANCE_LOW))
+        val open = PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE)
+        startForeground(1,Notification.Builder(this,Schedule.CHANNEL).setSmallIcon(android.R.drawable.ic_popup_sync)
+            .setContentTitle(ExecutionPolicy.label(mode)).setContentText("Execution active until ${Schedule.time(wallDeadline)}")
+            .setContentIntent(open).build())
+        if (expected <= 0 || actual < expected || remaining !in 1..480_000) {
+            Schedule.record(this,"${ExecutionPolicy.label(mode)} rejected before dispatch: original deadline already passed or timestamp invalid."); stopSelf(); return START_NOT_STICKY
+        }
+        elapsedDeadline = SystemClock.elapsedRealtime() + remaining
+        val id = UUID.randomUUID().toString(); runId = id
+        val p = Schedule.prefs(this)
+        val previous = p.getString("runIds","").orEmpty().split(',').filter { it.isNotEmpty() }
+        val edit = p.edit()
+        for (old in previous.dropLast(39)) edit.remove("runMode:$old").remove("runTime:$old")
+        edit.putString("runIds",(previous.takeLast(39)+id).joinToString(","))
+            .putString("runMode:$id",mode).putLong("runTime:$id",expected)
+            .putString("activeId",id).putLong("active",actual).putLong("activeUntil",wallDeadline).putString("activeMode",mode)
+        if (mode != "scheduled") edit.putString("lastManualId",id).putString("manualResult","Starting ${ExecutionPolicy.label(mode).lowercase()}…")
+        edit.commit()
+        val power = getSystemService(PowerManager::class.java)
+        Schedule.record(this,"${ExecutionPolicy.label(mode)} starting: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; battery exemptions scheduler=${power.isIgnoringBatteryOptimizations(packageName)}, Termux=${power.isIgnoringBatteryOptimizations("com.termux")}.")
+        lock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Interlink:execution").also { it.acquire(remaining) }
+        handler.postDelayed(tick,1000)
         val base = "/data/data/com.termux/files"
         val work = "$base/home/Helping_hands/Interlink-Auto-Bot"
-        val result = PendingIntent.getBroadcast(this,2,
-            Intent(this,ResultReceiver::class.java).putExtra("scheduled",scheduled),
-            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_MUTABLE)
+        val callback = PendingIntent.getBroadcast(this,2,Intent(this,ResultReceiver::class.java)
+            .setData(Uri.parse("interlink-result://run/$id")),PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_MUTABLE)
         val command = Intent("com.termux.RUN_COMMAND").setClassName("com.termux","com.termux.app.RunCommandService")
             .putExtra("com.termux.RUN_COMMAND_PATH","$base/usr/bin/bash")
-            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS",if (mode == "scheduled") arrayOf("$work/run-scheduled.sh") else arrayOf("$work/run-on-demand.sh",mode))
-            .putExtra("com.termux.RUN_COMMAND_WORKDIR",work)
-            .putExtra("com.termux.RUN_COMMAND_BACKGROUND",true)
-            .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT",result)
+            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", if (mode == "scheduled") arrayOf("$work/run-scheduled.sh","--scheduled-at",expected.toString()) else arrayOf("$work/run-on-demand.sh",mode))
+            .putExtra("com.termux.RUN_COMMAND_WORKDIR",work).putExtra("com.termux.RUN_COMMAND_BACKGROUND",true)
+            .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT",callback)
         try {
             if (startService(command) == null) throw IllegalStateException()
-            if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Running… waiting for Termux to finish.").commit()
-            Schedule.record(this,"TERMUX_DISPATCHED; not a claim result")
+            Schedule.record(this,"${ExecutionPolicy.label(mode)} command sent to Termux; awaiting completion. Intended start ${Schedule.time(expected)}.")
         } catch (_: RuntimeException) {
-            if (mode != "scheduled") Schedule.prefs(this).edit().putString("manualResult","Could not start Termux. Check command permission and setup.").commit()
-            Schedule.record(this,"TERMUX_DISPATCH_FAILED; check permission and battery settings"); stopSelf()
+            callback.cancel()
+            if (mode != "scheduled") p.edit().putString("manualResult","Could not start Termux. Check permissions and background settings.").commit()
+            Schedule.record(this,"${ExecutionPolicy.label(mode)} dispatch failed. Check Termux command permission and background settings."); stopSelf()
         }
         return START_NOT_STICKY
     }
-    override fun onDestroy() {
+    private fun cleanup() {
         handler.removeCallbacksAndMessages(null)
         if (lock?.isHeld == true) lock?.release()
-        Schedule.prefs(this).edit().remove("active").remove("activeMode").commit()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        super.onDestroy()
+        lock = null
+        val p = Schedule.prefs(this)
+        if (p.getString("activeId",null) == runId) p.edit().remove("activeId").remove("active").remove("activeUntil").remove("activeMode").commit()
+        runId = null
     }
-    override fun onTimeout(startId: Int, fgsType: Int) { stopSelf() }
+    override fun onDestroy() { cleanup(); stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy() }
+    override fun onTimeout(startId: Int, fgsType: Int) { expire(); stopSelf() }
 }
 class ResultReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
-        if (i.getLongExtra("scheduled",-1) != Schedule.prefs(c).getLong("active",0)) return
+        val id = i.data?.lastPathSegment ?: return
+        val p = Schedule.prefs(c)
+        val mode = p.getString("runMode:$id",null) ?: return
         val result = i.getBundleExtra("result")
         val exit = if (result?.containsKey("exitCode") == true) result.getInt("exitCode") else -1
-        val mode = Schedule.prefs(c).getString("activeMode","scheduled")
-        if (mode != "scheduled") {
-            val message = when (exit) {
-                0 -> if (mode == "test") "Connection test passed. Authentication and API reads worked. No claim was submitted." else "One claim confirmed by the API and updated claim timestamp."
-                10 -> "Server reports not eligible. No claim submitted."
-                11 -> "Authentication failed or device credentials are missing. Check the private log; manual login may be required."
-                12 -> "A request failed. Check the on-demand log for the request stage and HTTP status."
-                13 -> "The API response was not in the expected format. Check the on-demand log."
-                14 -> "Another bot run is active. Wait for it to finish."
-                20 -> "Too close to a scheduled window or its deadline. Let the scheduled run finish first."
-                21 -> "Claim outcome could not be confirmed. Do not retry; review the on-demand log. Further manual claims are blocked until the outcome is resolved."
-                22 -> "Please wait at least one minute between manual claim attempts."
-                23 -> "This scheduled claim window was already attempted. No duplicate claim submitted."
-                124, 137 -> "Execution timed out. Check the log; any submitted claim may have an unknown outcome."
-                126, 127 -> "Bot files or commands are missing. Update the Termux project, including run-on-demand.sh and on-demand.js."
-                else -> "Termux returned exit $exit. Update the bot files and inspect the private on-demand log."
-            }
-            Schedule.prefs(c).edit().putString("manualResult",message).commit()
-        }
-        // Never copy stdout/stderr, which may include account information.
-        Schedule.record(c,"TERMUX_COMPLETED exit=$exit; see private Node ledger for window results")
-        c.stopService(Intent(c,RunService::class.java))
+        val active = p.getString("activeId",null) == id
+        val expected = p.getLong("runTime:$id",0)
+        val message = ExecutionPolicy.outcome(mode,exit)
+        Schedule.record(c,"$message Intended start ${Schedule.time(expected)}.${if (!active) " Completion arrived after service ended; this is not a new run." else ""}")
+        if (mode != "scheduled" && p.getString("lastManualId",null) == id) p.edit().putString("manualResult",message).commit()
+        p.edit().remove("runMode:$id").remove("runTime:$id").commit()
+        if (active) c.stopService(Intent(c,RunService::class.java))
     }
 }

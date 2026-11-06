@@ -19,11 +19,11 @@ The existing device/version headers and auth, eligibility, pre-claim advertiseme
 
 ## Decision
 
-Use six one-shot `AlarmManager.setExactAndAllowWhileIdle()` RTC alarms, rearming the next alarm before dispatch. The alarm receiver starts a bounded, visible `dataSync` foreground service that holds a timeout-limited CPU wake lock and invokes Termux's supported `RUN_COMMAND` service with background execution enabled. Termux runs the locked shell wrapper and exits Node after both windows, no later than :34. The result callback releases the companion service early; its deadline also releases resources if Termux never responds.
+Use six one-shot `AlarmManager.setExactAndAllowWhileIdle()` RTC alarms, registering six independent next-occurrence slots and rearming each delivered slot for the next day. The alarm receiver starts a bounded, visible `dataSync` foreground service that holds a timeout-limited CPU wake lock and invokes Termux's supported `RUN_COMMAND` service with background execution enabled. Termux runs the locked shell wrapper and exits Node after both windows, no later than :34. The result callback releases the companion service early; its deadline also releases resources if Termux never responds.
 
 ```mermaid
 flowchart TD
-  A[Android exact alarm at :26] --> B[Receiver rearms next local-time alarm]
+  A[Android exact alarm at :26] --> B[Receiver rearms only its delivered daily slot]
   B --> C[Bounded service and notification]
   C --> D[Termux RUN_COMMAND]
   D --> E[flock and execution deadline]
@@ -62,7 +62,7 @@ Exact alarms need user-granted `SCHEDULE_EXACT_ALARM` access on supported Androi
 | Force-stop Termux | Do not expect scheduled execution; manually reopen Termux before resuming |
 | Force-stop companion | Its alarms cannot be relied upon and may be canceled; reopen it and select Enable / repair schedule |
 | Reboot | Boot receiver rearms future alarms after normal unlock/credential-encrypted storage availability. No pre-unlock credential access. Missed slots are logged, not replayed |
-| Time or timezone change | Receiver recalculates future local times. Active Node run stops further requests when it detects a timezone or >5-second clock jump. Repeated local hour uses the same ledger key |
+| Time or timezone change | Receiver recalculates future local times. Active Node run stops further requests when a suspend-aware elapsed clock detects a timezone or >5-second wall-clock jump. Repeated local hour uses the same ledger key |
 
 Force-stop is explicitly different from swiping away an activity. Android 15 cancels pending intents when an app enters the stopped state. Reboot is not a promised escape from force-stop. [Android stopped-state behavior](https://developer.android.com/about/versions/15/behavior-changes-all)
 
@@ -101,6 +101,7 @@ Interlink-Auto-Bot/
   lib/eligibility.js         HTTP/application status and eligibility validation
   setup-termux.sh            first-time setup and credential-preserving upgrades
   lib/storage.js            atomic private writes; fail-closed JSON reads
+  lib/execution-clock.js    suspend-aware clock guard and bounded waits
   lib/windows.js            local schedule and conservative confirmation predicate
   run-scheduled.sh           kernel lock, timeout and private log redirection
   setup-schedule.sh          optional legacy cron installer
@@ -163,3 +164,11 @@ Android compilation and lint completed successfully. Callback delivery, reboot, 
 | Maintenance | Shell/Node/cron | Android target/build/permissions plus Node dependencies and API contracts |
 
 A native API client would reduce integration failure points if Termux dispatch fails on the target phone. It would still need an honest user-visible background-execution design and could not promise execution after force-stop.
+
+## Regression coverage for the overnight failures
+
+The reported 01:30:33 false missed-window result is reproduced using injected wall and suspend-aware clocks. Tests require waiting until 01:31 and checking eligibility, rather than terminating. Other cases cover waking after the real deadline without any requests, clock adjustments, timezone changes, and finishing a bounded wait on the first callback after a long suspension.
+
+Android unit tests cover six independent local alarm times, delayed delivery, exact end boundaries, midnight, DST, elapsed-realtime deadlines and mode-specific completion descriptions. Instrumented tests exercise actual receiver/recovery code, duplicate and delayed delivery, callback isolation, boot/timezone recovery, and an OS-delivered alarm with an expired payload that cannot launch claims. An opt-in Doze test is run separately to avoid repeated idle alarms conflicting with Android's per-app quotas. No live account is used by these tests.
+
+Sources for clock semantics: [libuv Linux uptime implementation](https://github.com/libuv/libuv/blob/v1.x/src/unix/linux.c), [Linux CLOCK_BOOTTIME and CLOCK_MONOTONIC](https://man7.org/linux/man-pages/man2/clock_gettime.2.html).
