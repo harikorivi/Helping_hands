@@ -22,6 +22,45 @@ class SchedulingIntegrationTest {
         assertTrue("Grant SCHEDULE_EXACT_ALARM app-op in the emulator first",Schedule.allowed(c))
     }
     @After fun cleanup() { Schedule.disable(c); Schedule.prefs(c).edit().clear().commit() }
+    @Test fun alarmClockProbeDuringForcedIdle() {
+        Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testDoze") == "true")
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun shell(command:String)=automation.executeShellCommand(command).use { fd -> java.io.FileInputStream(fd.fileDescriptor).bufferedReader().readText() }
+        try {
+            shell("dumpsys battery unplug")
+            shell("input keyevent 223")
+            val output=shell("dumpsys deviceidle force-idle")
+            assertTrue(output,output.contains("idle",ignoreCase=true))
+            alarmClockProbeDeliversThroughReceiverWithoutOpeningUi()
+        } finally {
+            shell("dumpsys deviceidle unforce")
+            shell("dumpsys battery reset")
+            shell("input keyevent 224")
+        }
+    }
+    @Test fun alarmClockProbeRegistersAndCancelsWithoutChangingDailySlots() {
+        Schedule.recover(c,"fixture")
+        val before=ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) }
+        BackgroundTest.schedule(c,600000,true)
+        val at=Schedule.prefs(c).getLong("probeAt",0)
+        assertEquals(at,Schedule.manager(c).nextAlarmClock!!.triggerTime)
+        assertEquals(before,ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) })
+        BackgroundTest.cancel(c)
+        assertTrue(Schedule.manager(c).nextAlarmClock?.triggerTime != at)
+        assertEquals(0L,Schedule.prefs(c).getLong("probeAt",0))
+    }
+    @Test fun alarmClockProbeDeliversThroughReceiverWithoutOpeningUi() {
+        // Keep execution busy: verify alarm delivery without launching Termux or claims.
+        Schedule.prefs(c).edit().putLong("activeUntil",System.currentTimeMillis()+60000).commit()
+        BackgroundTest.schedule(c,3000,true)
+        val at=Schedule.prefs(c).getLong("probeAt",0)
+        val end=SystemClock.elapsedRealtime()+20000
+        while(Schedule.prefs(c).getLong("probeAt",0)==at && SystemClock.elapsedRealtime()<end) Thread.sleep(100)
+        assertEquals(0L,Schedule.prefs(c).getLong("probeAt",0))
+        val lines=Diagnostics.report(c).lines().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+        assertTrue(lines.any { it.optString("event")=="ALARM_RECEIVED" && it.optLong("scheduledAt")==at && it.optString("reason")=="alarm_clock_probe" })
+        assertTrue(Schedule.prefs(c).getString("probeStatus","")!!.contains("busy"))
+    }
     @Test fun recoveryArmsAllSixAndDisableClearsThem() {
         Schedule.recover(c,"integration fixture")
         val p=Schedule.prefs(c)

@@ -12,15 +12,19 @@ object BackgroundTest {
     private fun pending(c: Context, at: Long = 0) = PendingIntent.getBroadcast(c,900,
         Intent(c,BackgroundTestReceiver::class.java).setAction(ACTION).putExtra("scheduled",at),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    fun schedule(c: Context, delayMillis: Long = 120000) {
+    fun schedule(c: Context, delayMillis: Long = 120000, alarmClock: Boolean = false) {
         val p = Schedule.prefs(c)
         require(delayMillis > 0)
         val at = System.currentTimeMillis()+delayMillis
         try {
-            Schedule.manager(c).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,pending(c,at))
-            p.edit().putLong("probeAt",at).putLong("probeLatest",at).putString("probeStatus","Waiting for ${Schedule.time(at)}").commit()
-            Diagnostics.emit(c,"ALARM_SCHEDULED",at,"test-$at",status="registered",reason="connection_probe")
-            Schedule.record(c,"Background test alarm registered: intended ${Schedule.time(at)}. No claim; registration is not delivery.")
+            val operation = pending(c,at)
+            if (alarmClock) {
+                val show = PendingIntent.getActivity(c,901,Intent(c,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                Schedule.manager(c).setAlarmClock(AlarmManager.AlarmClockInfo(at,show),operation)
+            } else Schedule.manager(c).setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,operation)
+            p.edit().putString("probeMethod",if(alarmClock) "alarm_clock" else "exact_while_idle").putLong("probeAt",at).putLong("probeLatest",at).putString("probeStatus","${if(alarmClock) "Alarm-clock" else "Standard"} test waiting for ${Schedule.time(at)}").commit()
+            Diagnostics.emit(c,"ALARM_SCHEDULED",at,"test-$at",status="registered",reason=if(alarmClock) "alarm_clock_probe" else "connection_probe")
+            Schedule.record(c,"${if(alarmClock) "Alarm-clock" else "Standard"} background test alarm registered: intended ${Schedule.time(at)}. No claim; registration is not delivery.")
         } catch (error: RuntimeException) {
             p.edit().putString("probeStatus","Registration failed: ${error.javaClass.simpleName}").commit()
             Schedule.record(c,"Background test registration failed: ${error.javaClass.simpleName}.")
@@ -41,13 +45,25 @@ object BackgroundTest {
 }
 class BackgroundTestReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
-        Diagnostics.emit(c,"RECEIVER_STARTED",i.getLongExtra("scheduled",0),"test-${i.getLongExtra("scheduled",0)}",reason="connection_probe")
+        val alarmClock = Schedule.prefs(c).getString("probeMethod","") == "alarm_clock"
+        val method = if(alarmClock) "alarm_clock_probe" else "connection_probe"
+        Diagnostics.emit(c,"RECEIVER_STARTED",i.getLongExtra("scheduled",0),"test-${i.getLongExtra("scheduled",0)}",reason=method)
         if (i.action != BackgroundTest.ACTION) return
         val p = Schedule.prefs(c)
         val at = i.getLongExtra("scheduled",0)
         if (at <= 0 || p.getLong("probeAt",0)!=at) return
         val now = System.currentTimeMillis()
-        Diagnostics.emit(c,"ALARM_RECEIVED",at,"test-$at",status="delivered",reason="connection_probe",details=org.json.JSONObject().put("delayMs",now-at))
+        Diagnostics.emit(c,"ALARM_RECEIVED",at,"test-$at",status="delivered",reason=method,details=org.json.JSONObject().put("delayMs",now-at))
+        if(alarmClock) {
+            try {
+                val nm=c.getSystemService(android.app.NotificationManager::class.java)
+                nm.createNotificationChannel(android.app.NotificationChannel("alarm_test","Alarm-clock test results",android.app.NotificationManager.IMPORTANCE_DEFAULT))
+                val open=PendingIntent.getActivity(c,901,Intent(c,MainActivity::class.java),PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                nm.notify(902,android.app.Notification.Builder(c,"alarm_test").setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                    .setContentTitle("Alarm-clock test delivered").setContentText("Delay ${(now-at)/1000}s. No claim submitted by this test.")
+                    .setContentIntent(open).setAutoCancel(true).build())
+            } catch(error:RuntimeException) { Diagnostics.emit(c,"TEST_NOTIFICATION_FAILED",at,"test-$at",reason=error.javaClass.simpleName) }
+        }
         p.edit().remove("probeAt").putString("probeStatus","Alarm delivered; awaiting connection test.").commit()
         Schedule.record(c,"Background test alarm delivered: intended ${Schedule.time(at)}; actual ${Schedule.time(now)}; delay ${(now-at)/1000}s.")
         if (now < at || now >= at+120000) {

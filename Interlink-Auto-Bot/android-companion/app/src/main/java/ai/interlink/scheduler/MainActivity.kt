@@ -179,7 +179,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.7-rc3",13f)
+        text(titles,"Your Termux automation companion • v1.7-rc4",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -243,6 +243,16 @@ class MainActivity : Activity() {
         text(manual,p.getString("manualResult","No on-demand action yet.").orEmpty(),15f,true)
         button(manual,"Test connection now • no claim",true) { startManual("test") }
         text(manual,"Background alarm test: ${p.getString("probeStatus","Not run yet")}",14f)
+        button(manual,"Test alarm-clock delivery • in 10 minutes",true) {
+            if (!canRun) explain("Complete setup first","This connection test needs the same Termux and alarm access as the standard test.")
+            else if (!getSystemService(NotificationManager::class.java).areNotificationsEnabled()) explain("Enable notifications first","Enable Scheduler notifications so the alarm-clock test can show its delivery result.")
+            else {
+                BackgroundTest.schedule(this,10L*60*1000,true)
+                render()
+                explain("Alarm-clock test scheduled","Lock the phone and leave it untouched for 12 minutes. This uses Android's alarm-clock mechanism, may show an upcoming-alarm indicator, and posts a notification on delivery. It submits no claim. Afterward save the diagnostic log to Downloads.")
+            }
+        }
+        text(manual,"Comparison test only: the six daily runs still use the existing standard alarm mechanism. A new test replaces any pending background test. The alarm-clock notification may sound according to your notification settings.",13f)
         button(manual,"Test background alarm • in 2 minutes") {
             if (!canRun) explain("Complete setup first", "This test requires Termux command access, exact-alarm capability and both battery exemptions.")
             else { BackgroundTest.schedule(this); render() }
@@ -325,7 +335,7 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.7-rc3\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.7-rc4\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
                 "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +

@@ -1,4 +1,14 @@
-# Interlink Scheduler 1.7-rc3 — configurable live diagnostics
+# Interlink Scheduler 1.7-rc4 — alarm-clock comparison
+
+[Download Interlink-Scheduler-1.7-rc4.apk](Interlink-Scheduler-1.7-rc4.apk). Install over the existing app. Version code 11, same package and signing identity. No Node update or login needed when already on the 1.7-rc1 Node source.
+
+**One next action:** enable Live debug logging, tap **Test alarm-clock delivery • in 10 minutes**, then lock the phone and leave it untouched for 12 minutes. Save the diagnostic log to Downloads afterward. This probe uses `setAlarmClock()` and posts a delivery notification; it submits no claim. A system upcoming-alarm indicator may appear. Cancel using **Cancel background alarm test**.
+
+Six daily claim runs remain unchanged pending physical validation. This is a comparison build, not a proven Funtouch fix. [Instructions](../../README-mobile.md) · [Validation](VALIDATION-1.7-rc4.md).
+
+SHA-256: `d1055a06b6188816ae12ea1aab2c48a47f68692b4a36975b0054f0534caa2c80`.
+
+## Previous candidate 1.7-rc3
 
 [Download Interlink-Scheduler-1.7-rc3.apk](Interlink-Scheduler-1.7-rc3.apk). Install over the existing app; do not uninstall. Package `ai.interlink.scheduler`, version code 10. Existing 1.7-rc1/rc2 Node source does not need another update for these Android-only features. No re-login required.
 

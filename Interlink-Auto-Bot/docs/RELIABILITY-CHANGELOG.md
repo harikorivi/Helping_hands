@@ -1,3 +1,11 @@
+# Alarm-clock comparison candidate 1.7-rc4
+
+- Added one explicit ten-minute, user-visible `setAlarmClock()` connection probe, with delivery notification, cancellation and separate method identification in the existing exported log.
+- Uses the same single-probe identity, so new probes replace old ones. Six daily claims and Node behavior remain unchanged. No claims submitted by the probe.
+- Added emulator verification for registration/cancellation without changing daily slots, receiver delivery without UI opening, and opt-in forced-idle delivery.
+- Physical evidence so far: standard probe delayed 28.993s after process death and 98.229s with the same process alive. The latter arrived while non-interactive, before screen-on. Neither proves a specific OEM cause or that unlock is always required.
+- This comparison has not yet been run on the affected phone and is not a reliability fix claim.
+
 # Live debug candidate 1.7-rc3
 
 - Added persistent, default-off Live debug logging switch, app visibility events, observed screen/unlock/power events and an on-demand system-state snapshot.

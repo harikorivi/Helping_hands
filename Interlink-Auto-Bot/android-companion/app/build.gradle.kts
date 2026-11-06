@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "ai.interlink.scheduler"
     compileSdk = 35
-    defaultConfig { applicationId = "ai.interlink.scheduler"; minSdk = 26; targetSdk = 35; versionCode = 10; versionName = "1.7-rc3"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+    defaultConfig { applicationId = "ai.interlink.scheduler"; minSdk = 26; targetSdk = 35; versionCode = 11; versionName = "1.7-rc4"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }
