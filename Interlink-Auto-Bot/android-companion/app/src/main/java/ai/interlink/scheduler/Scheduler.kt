@@ -240,7 +240,7 @@ class RunService : Service() {
             .setData(Uri.parse("interlink-result://run/$id")),PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_MUTABLE)
         val command = Intent("com.termux.RUN_COMMAND").setClassName("com.termux","com.termux.app.RunCommandService")
             .putExtra("com.termux.RUN_COMMAND_PATH","$base/usr/bin/bash")
-            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", if (mode == "scheduled") arrayOf("$work/run-scheduled.sh","--scheduled-at",expected.toString(),"--execution-id",executionId,"--attempt-id",id) else arrayOf("$work/run-on-demand.sh",mode))
+            .putExtra("com.termux.RUN_COMMAND_ARGUMENTS", if (mode == "scheduled") arrayOf("-c",assets.open("termux-bootstrap.sh").bufferedReader().use { it.readText() },"interlink-bootstrap",work,expected.toString(),executionId,id) else arrayOf("$work/run-on-demand.sh",mode))
             .putExtra("com.termux.RUN_COMMAND_WORKDIR",work).putExtra("com.termux.RUN_COMMAND_BACKGROUND",true)
             .putExtra("com.termux.RUN_COMMAND_PENDING_INTENT",callback)
         try {
@@ -284,10 +284,11 @@ class ResultReceiver : BroadcastReceiver() {
         val parsed=if(mode=="scheduled") ExecutionReport.parse(result?.getString("stdout"),executionId,id,expected) else null
         var message = ExecutionPolicy.outcome(mode,exit)
         if(mode=="scheduled") {
+            if(parsed?.startupReason!=null) Diagnostics.emit(c,"TERMUX_STARTUP_FAILED",expected,executionId,status="failed",reason=parsed.startupReason,details=JSONObject().put("exitCode",exit))
             message=parsed?.summary ?: "Termux callback exit=$exit. No valid correlated Node report; window results UNKNOWN. Update bot source and inspect private log."
             if(parsed!=null) for(e in parsed.events) Diagnostics.emit(c,e.getString("event"),expected,executionId,status=e.optString("result","observed"),reason=e.optString("reason"),details=e,actual=e.getLong("actualAt"),source="node")
             val status=if(parsed?.successful==2) "success" else if(parsed?.complete==true) "incomplete" else "unknown"
-            Diagnostics.outcome(c,expected,status,if(parsed==null) "node_report_missing_or_invalid" else "window_results",message)
+            Diagnostics.outcome(c,expected,status,if(parsed==null) "node_report_missing_or_invalid" else parsed.startupReason ?: "window_results",message)
         }
         Diagnostics.emit(c,if(mode=="scheduled" && parsed?.successful!=2 || exit!=0) "EXECUTION_FAILED" else "EXECUTION_COMPLETED",expected,executionId,
             status=if(exit==0) "callback_received" else "nonzero_exit",reason=if(mode=="scheduled" && parsed==null) "node_report_missing_or_invalid" else "see_window_results",details=JSONObject().put("attemptId",id).put("exitCode",exit))

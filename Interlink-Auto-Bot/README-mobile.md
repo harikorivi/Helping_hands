@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 1.8-rc1 (validation candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [audit](docs/RELIABILITY-AUDIT.md) and [validation plan](docs/RELIABILITY-VALIDATION.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 1.8-rc2 (validation candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [audit](docs/RELIABILITY-AUDIT.md) and [validation plan](docs/RELIABILITY-VALIDATION.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-1.8-rc1.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.8-rc1.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-1.8-rc2.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.8-rc2.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.8-rc1.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.8-rc2.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -320,7 +320,7 @@ Existing users: pause the schedule, let an active run finish, update the reposit
 Use the separate [Alarm Delivery Check app](android-companion/alarm-diagnostics/README.md). Its offline two-minute/ten-minute tests record actual receiver delivery and app-opening times, then provide a copyable report. It needs no network or Termux access and makes no claims. It tests its own alarms, not another app's private state, so results must be compared with the scheduler's diagnostics.
 
 
-## Migrating to the evidence-driven validation candidate (1.8-rc1)
+## Migrating to the evidence-driven validation candidate (1.8-rc2)
 
 Pause the schedule and let the current run finish. In Termux:
 
@@ -333,7 +333,7 @@ bash setup-termux.sh
 
 If Git refuses because of older local patches, preserve them with `git stash push --include-untracked -m "Phone patches before diagnostic candidate"` and retry the pull. Do not automatically pop old patches onto the current implementation. Ignored credentials/claim state remain private and untouched.
 
-Install **Interlink-Scheduler-1.8-rc1.apk** over the existing app using the same signing key. Do not uninstall first. Open the app, repair once and enable the schedule. Both Node source and APK must be upgraded: an old wrapper returns no structured result, which is displayed as **UNKNOWN**, even if its exit code is zero. No re-login is required if stored credentials still refresh.
+Install **Interlink-Scheduler-1.8-rc2.apk** over the existing app using the same signing key. Do not uninstall first. Open the app, repair once and enable the schedule. Both Node source and APK must be upgraded: an old wrapper returns no structured result, which is displayed as **UNKNOWN**, even if its exit code is zero. No re-login is required if stored credentials still refresh.
 
 The **Execution evidence** card shows delivery statistics, last success/failure/miss/unknown, and each reported window's outcome and reason. **Copy structured execution report** exports JSONL. **Copy diagnostic history** also includes this evidence. Reports do not include raw HTTP responses, tokens, account information, passcodes or OTPs. Android environment snapshots belong to the event time; Node events have `device=null` and a separately labelled `deviceAtImport` snapshot because Termux cannot observe that historical Android state.
 
@@ -346,14 +346,14 @@ Event details are retained for today/yesterday, bounded at 4,000 Android events.
 
 ### Save a diagnostic log without copying text
 
-In **Interlink Scheduler 1.8-rc1**, open **Execution evidence → Save diagnostic log to Downloads**. Wait for the saved confirmation. On Android 10 and newer, open your phone's **Files / File Manager → Downloads → Interlink Scheduler** and share the newest `Interlink-diagnostics-*.txt` as a file attachment. No USB, pairing, clipboard paste or storage permission is needed. Android 8/9 instead opens a file picker; choose Downloads and tap Save.
+In **Interlink Scheduler 1.8-rc2**, open **Execution evidence → Save diagnostic log to Downloads**. Wait for the saved confirmation. On Android 10 and newer, open your phone's **Files / File Manager → Downloads → Interlink Scheduler** and share the newest `Interlink-diagnostics-*.txt` as a file attachment. No USB, pairing, clipboard paste or storage permission is needed. Android 8/9 instead opens a file picker; choose Downloads and tap Save.
 
 The file contains companion activity, current device state, scheduled times, retained execution summaries and structured events. It does not include raw Termux logs or credential files. It includes device information and execution times, so share it only with the intended recipient. Exported copies remain until you delete them; the app's two-day event cleanup does not delete Downloads exports.
 
 This export update does not fix the reported alarm delay until screen unlock. The user observed delayed background execution without opening Scheduler; treat that separately from foreground app-open recovery. The precise OS cause remains unconfirmed.
 
 
-### Configurable live testing (1.8-rc1)
+### Configurable live testing (1.8-rc2)
 
 1. Open **Interlink Scheduler → Live testing diagnostics** and enable **Live debug logging**. It is off by default and remembers your selection.
 2. Tap **Record system state now** to mark your test's starting conditions.
@@ -366,7 +366,7 @@ Extra events include `APP_FOREGROUND`, `APP_BACKGROUND`, `SCREEN_ON_OBSERVED`, `
 App background means the activity is no longer visible; it cannot distinguish Home, swiping Recents, screen lock or opening another screen. Screen off does not prove Doze. Dynamic observers only work while the process exists, and timestamps describe when the app observed an event. Missing events during process death cannot be reconstructed. No always-running service, polling or extra wake lock is introduced. This release does not fix the reported unlock-dependent alarm delay.
 
 
-### Alarm-clock comparison: one test at a time (1.8-rc1)
+### Alarm-clock comparison: one test at a time (1.8-rc2)
 
 Install the new APK over the existing app. No Node change or login is needed if already using the 1.7-rc1 source. In Scheduler, enable **Live debug logging**, then tap **Test alarm-clock delivery • in 10 minutes**. This uses `setAlarmClock()` for this single test only. Lock the phone, leave it untouched for 12 minutes, and note any call or other wake-up. Do not start another test meanwhile. Afterward save the diagnostic log to Downloads and share the file.
 
@@ -375,7 +375,7 @@ This is a user-visible alarm-clock test: Android may show an upcoming-alarm indi
 Structured registration/receiver events identify `alarm_clock_probe`; existing standard tests use `connection_probe`. Six daily claim runs still use the standard exact-idle mechanism. A short successful test is not sufficient for changing the production schedule: long locked-screen validation on the affected phone remains required. Opening the app does not replay an overdue probe.
 
 
-### Optional continuous scheduling mode (1.8-rc1)
+### Optional continuous scheduling mode (1.8-rc2)
 
 After updating **both** the Node source (at least 1.7-rc1) and the APK, open Interlink Scheduler. Ensure the six daily schedule is enabled, then tap **Start continuous scheduling** and confirm the battery cost. Keep the visible **Interlink continuous scheduling** notification. The app holds a partial CPU wake lock between runs and uses an in-process timer at each registered start time. Android exact alarms remain registered as a second trigger. The shared per-window ledger and delivery marker prevent duplicate requests. Stop the mode with **Stop continuous scheduling** in the app or **Stop monitoring** on its notification. Pausing the schedule also stops it.
 
@@ -384,3 +384,31 @@ This is the battery-intensive option for testing the affected vivo phone. Expect
 For a quick test, tap **Test continuous timer • in 2 minutes** while the service shows running, lock the phone and leave it untouched for 3 minutes. The notification should report firing without any claim. Save the diagnostic log; look for `MONITOR_TEST_PLANNED` followed by `MONITOR_TEST_TIMER_FIRED` and its delay. This tests the wake lock and in-process timer only.
 
 For the first full locked-screen claim test, leave the phone locked across one actual 01:26/05:26/09:26/13:26/17:26/21:26 slot. Then save the diagnostic log to Downloads. Look for `MONITOR_TIMER_FIRED` and `MONITOR_SLOT_ACCEPTED` near the scheduled time, followed by Termux/Node and both independent window results. If the monitor is killed, the report may only contain a later process-exit record; it cannot invent the missing event. Do not manually claim during the same slot. Physical overnight reliability is still unverified until this evidence is collected.
+
+
+### Updating for startup diagnosis (1.8-rc2)
+
+This update needs the **Termux source as well as the APK** because the scheduled wrapper now declares protocol version 2. Pause the schedule and stop continuous monitoring before updating; re-enable them afterward. Preserve credentials and the execution ledger. In Termux:
+
+```sh
+cd ~/Helping_hands
+git pull --ff-only
+cd Interlink-Auto-Bot
+npm ci --ignore-scripts
+```
+
+If Git reports local modifications, preserve them before updating; do not reset or delete credentials/ledger to fix a pull. An older wrapper is now identified as `bot_update_required` before any scheduled claim is attempted.
+
+The companion performs offline checks of the fixed project directory, required files, Node version, dependencies, `flock`, `timeout` and the wrapper protocol. New `TERMUX_STARTUP_FAILED` events report a safe reason. `wrapper_exit_without_report` preserves the original exit number, including 2, while keeping raw stdout/stderr private. If Node produced its correlated result, each window's actual reason remains authoritative. The historical exit 2 cannot be reconstructed from its number alone.
+
+Continuous mode explicitly keeps the service after UI task removal and records `MONITOR_TASK_REMOVED` if Android delivers that callback. **Close screen, keep scheduling** closes the app's UI task while keeping the service requested. Existing `START_STICKY` behavior requests OS restart after ordinary process death; OEM force-stop/termination may still suppress it. A missing callback cannot prove which action occurred.
+
+
+After updating, verify installation offline without authentication or claims:
+
+```sh
+cd ~/Helping_hands/Interlink-Auto-Bot
+bash android-companion/app/src/main/assets/termux-bootstrap.sh "$PWD" 1 installation-check installation-check --check-only
+```
+
+Expected result: `startupReason` is `installation_checks_passed` and `exitCode` is `0`. `nodeStarted:false` is expected for this check because it does not start the bot. Any other startup reason identifies the installation problem to resolve before the next scheduled run.

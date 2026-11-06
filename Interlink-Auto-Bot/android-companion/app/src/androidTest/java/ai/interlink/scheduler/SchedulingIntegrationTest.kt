@@ -22,6 +22,67 @@ class SchedulingIntegrationTest {
         assertTrue("Grant SCHEDULE_EXACT_ALARM app-op in the emulator first",Schedule.allowed(c))
     }
     @After fun cleanup() { Schedule.disable(c); Schedule.prefs(c).edit().clear().commit() }
+    @Test fun continuousMonitorSurvivesRecentsSwipeAndScreenOffTimer() {
+        Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testRecents") == "true")
+        val started=System.currentTimeMillis()
+        fun observed(name:String)=Diagnostics.report(c).lines().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+            .any { it.optString("event")==name && it.optLong("actualAt")>=started }
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.serviceInfo=automation.serviceInfo.apply { flags=flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS }
+        fun shell(command:String)=automation.executeShellCommand(command).use { fd -> java.io.FileInputStream(fd.fileDescriptor).bufferedReader().readText() }
+        Schedule.recover(c,"fixture")
+        shell("input keyevent 224")
+        shell("wm dismiss-keyguard")
+        shell("am start -W -n ai.interlink.scheduler/.MainActivity")
+        Thread.sleep(800)
+        Schedule.prefs(c).edit().putBoolean("continuousMonitor",true).commit()
+        PersistentMonitorService.start(c,"recents_test")
+        try {
+            val end=SystemClock.elapsedRealtime()+5000
+            while(!observed("MONITOR_TIMER_PLANNED") && SystemClock.elapsedRealtime()<end) Thread.sleep(50)
+            assertTrue(PersistentMonitorService.active)
+            PersistentMonitorService.scheduleProbe(c,15000)
+            shell("input keyevent 3")
+            shell("input keyevent 187")
+            Thread.sleep(1000)
+            fun findCard(node:android.view.accessibility.AccessibilityNodeInfo?):android.graphics.Rect? {
+                if(node==null) return null
+                val bounds=android.graphics.Rect().also { node.getBoundsInScreen(it) }
+                if(node.contentDescription?.toString()=="Interlink Scheduler" ||
+                    (node.viewIdResourceName=="com.android.launcher3:id/task" && bounds.width()>c.resources.displayMetrics.widthPixels/2)) return bounds
+                for(n in 0 until node.childCount) findCard(node.getChild(n))?.let { return it }
+                return null
+            }
+            var card:android.graphics.Rect?=null
+            val cardEnd=SystemClock.elapsedRealtime()+5000
+            while(card==null && SystemClock.elapsedRealtime()<cardEnd) {
+                card=findCard(automation.rootInActiveWindow)
+                if(card==null) Thread.sleep(100)
+            }
+            if(card==null) {
+                automation.takeScreenshot()?.let { bitmap -> java.io.File(c.filesDir,"recents-test.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it) } }
+            }
+            assertNotNull("Scheduler card not visible in Recents; root=${automation.rootInActiveWindow?.packageName}",card)
+            shell("input swipe ${card!!.centerX()} ${card.centerY()} ${card.centerX()} 0 250")
+            val removedEnd=SystemClock.elapsedRealtime()+4000
+            while(!observed("MONITOR_TASK_REMOVED") && SystemClock.elapsedRealtime()<removedEnd) Thread.sleep(50)
+            assertTrue("Actual Recents swipe did not produce task-removal evidence",observed("MONITOR_TASK_REMOVED"))
+            shell("input keyevent 223")
+            val fireEnd=SystemClock.elapsedRealtime()+20000
+            while(!observed("MONITOR_TEST_TIMER_FIRED") && SystemClock.elapsedRealtime()<fireEnd) Thread.sleep(50)
+            assertTrue("Foreground service stopped after removing Recents task",PersistentMonitorService.active)
+            assertTrue("Locked timer did not fire after Recents removal",observed("MONITOR_TEST_TIMER_FIRED"))
+            val evidence=Diagnostics.report(c).lines().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+                .last { it.optString("event")=="MONITOR_TEST_TIMER_FIRED" && it.optLong("actualAt")>=started }
+            assertFalse("Screen must still be off when the timer fires",evidence.getJSONObject("device").getBoolean("interactive"))
+            // This AVD has no device credential; screen-off is asserted, credential lock is physical-device validation.
+            println("Screen-off Recents timer evidence: $evidence")
+            assertFalse(Schedule.prefs(c).contains("activeId"))
+        } finally {
+            PersistentMonitorService.stop(c)
+            shell("input keyevent 224")
+        }
+    }
     @Test fun continuousMonitorStartsWithWakeLockAndStopsCleanly() {
         Schedule.recover(c,"fixture")
         val scheduled=ExecutionPolicy.hours.map { Schedule.prefs(c).getLong("alarm:$it",0) }

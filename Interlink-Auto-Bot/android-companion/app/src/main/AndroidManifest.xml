@@ -25,7 +25,7 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
-        <service android:name=".PersistentMonitorService" android:exported="false" android:foregroundServiceType="specialUse">
+        <service android:name=".PersistentMonitorService" android:stopWithTask="false" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User enabled continuous scheduling with visible notification and CPU wake lock for precise local alarms" />
         </service>
         <service android:name=".RunService" android:exported="false" android:foregroundServiceType="dataSync" />

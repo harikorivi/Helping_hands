@@ -1,3 +1,11 @@
+# Task removal and startup diagnosis candidate 1.8-rc2
+
+- Explicitly declares stopWithTask=false (Android's previous default), records onTaskRemoved while retaining the active timer, and adds Close screen, keep scheduling. This is not a claim that a manifest flag bypasses OEM process termination.
+- Adds an emulator test with actual Recents swipe and subsequent screen-off timer, separately gated from routine instrumentation.
+- Android-provided Termux bootstrap performs offline checks and only forwards safe correlated reports. Outdated bot source is identified before execution; missing report after exit 2 gets an explicit safe fallback reason. No raw stdout/stderr is imported.
+- Scheduled wrapper protocol 2 adds startup phase and safe fallback reason. Both source and APK must be updated. Tests use temporary fake installations and never access real credentials or submit claims.
+- Historical exit 2 remains unexplained without its private Node log; new reports diagnose future startup failures rather than inventing a past cause.
+
 # Optional continuous scheduler candidate 1.8-rc1
 
 - Adds a two-minute no-claim test of the same in-process timer; it records planned/fired events and delay and posts a result notification.

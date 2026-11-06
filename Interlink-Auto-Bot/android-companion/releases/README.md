@@ -1,4 +1,16 @@
-# Interlink Scheduler 1.8-rc1 — optional continuous scheduling
+# Interlink Scheduler 1.8-rc2 — task removal and startup diagnosis
+
+[Download Interlink-Scheduler-1.8-rc2.apk](Interlink-Scheduler-1.8-rc2.apk). Version code 13, same package/signing identity. Install over the existing app; **update the Termux bot source too**. Wrapper protocol 2 is required; older source is reported as `bot_update_required` before any scheduled claim.
+
+Continuous mode retains its foreground service after normal task removal and records `MONITOR_TASK_REMOVED`. A **Close screen, keep scheduling** action closes only the UI task. Existing sticky restart and notification controls remain. OEM termination and true force-stop cannot be overridden.
+
+The scheduled Termux bootstrap checks project files, Node version, dependencies, flock/timeout and wrapper compatibility offline. Safe startup reasons replace generic missing-report failures. Historical exit 2 remains unexplained without its old private Node log; the new path diagnoses subsequent attempts.
+
+[Upgrade guide](../../README-mobile.md) · [Validation](VALIDATION-1.8-rc2.md). Physical vivo overnight/service survival remains pending.
+
+SHA-256: `7d97c736db9511ec7d9ada5749d0c3418ce5f02e68ce2b464e13460503b9d633`.
+
+## Previous continuous candidate 1.8-rc1
 
 [Download Interlink-Scheduler-1.8-rc1.apk](Interlink-Scheduler-1.8-rc1.apk). Install over the existing app; do not uninstall. Version code 12, same package/signing identity. If your Termux source is already 1.7-rc1 or newer, no Node update or re-login is needed.
 
@@ -8,7 +20,7 @@ This is a phone validation candidate. Emulator tests pass, but the affected vivo
 
 SHA-256: `ddba3ff488d18b3fcade238bcc027283c3ea7ca31d06ea0326201c3c74f37c4f`.
 
-# Interlink Scheduler 1.8-rc1 — optional continuous scheduling
+## Previous continuous candidate 1.8-rc1
 
 [Download Interlink-Scheduler-1.8-rc1.apk](Interlink-Scheduler-1.8-rc1.apk). Install over the existing app; do not uninstall. Version code 12, same package/signing identity. If your Termux source is already 1.7-rc1 or newer, no Node update or re-login is needed.
 

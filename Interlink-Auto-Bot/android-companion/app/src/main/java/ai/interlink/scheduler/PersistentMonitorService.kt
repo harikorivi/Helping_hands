@@ -74,7 +74,7 @@ class PersistentMonitorService : Service() {
                 wake=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Interlink:continuous-schedule").also { it.acquire() }
                 Diagnostics.emit(this,"MONITOR_WAKE_LOCK_ACQUIRED",reason="continuous_user_enabled")
             }
-            Diagnostics.emit(this,"MONITOR_STARTED",reason=i?.getStringExtra("reason") ?: "system_restart")
+            Diagnostics.emit(this,"MONITOR_STARTED",reason=i?.getStringExtra("reason") ?: if(i==null) "system_sticky_restart" else "timer_or_schedule_refresh")
             if(i == null) Schedule.recover(this,"monitor restart")
             plan()
             planProbe()
@@ -145,6 +145,11 @@ class PersistentMonitorService : Service() {
         }
         probeTimer=task
         handler.postDelayed(task,(at-now).coerceAtLeast(1))
+    }
+    override fun onTaskRemoved(rootIntent:Intent?) {
+        Diagnostics.emit(this,"MONITOR_TASK_REMOVED",status=if(wake?.isHeld==true) "running_with_wake_lock" else "wake_lock_missing",reason="recents_task_removed")
+        // Keep this started foreground service and its timers. START_STICKY permits OS restart.
+        super.onTaskRemoved(rootIntent)
     }
     override fun onDestroy() {
         timer?.let(handler::removeCallbacks)

@@ -3,7 +3,7 @@ package ai.interlink.scheduler
 import org.json.JSONObject
 
 object ExecutionReport {
-    data class Parsed(val summary:String,val successful:Int,val events:List<JSONObject>,val complete:Boolean)
+    data class Parsed(val summary:String,val successful:Int,val events:List<JSONObject>,val complete:Boolean,val startupReason:String?=null)
     private val reasons=setOf("accepted_and_last_claim_advanced","server_not_eligible","missed_window","authentication_required",
         "startup_authentication_required","previous_submission_outcome_unknown","submission_outcome_unknown","verification_not_advanced",
         "claim_response_not_accepted","insufficient_time_remaining","insufficient_time_after_preclaim","verification_baseline_missing",
@@ -17,7 +17,11 @@ object ExecutionReport {
             val line=stdout.lineSequence().singleOrNull { it.startsWith("INTERLINK_RESULT ") } ?: return null
             val data=JSONObject(line.removePrefix("INTERLINK_RESULT "))
             if(data.optInt("version")!=1 || data.optString("executionId")!=executionId || data.optString("attemptId")!=attemptId || data.optLong("scheduledAt")!=scheduled) return null
-            if(!data.optBoolean("nodeStarted")) return Parsed("Node startup not confirmed. Wrapper exit ${data.optInt("exitCode",-1)}; check installation, lock or timeout.",0,emptyList(),false)
+            if(!data.optBoolean("nodeStarted")) {
+                val startup=data.optString("startupReason").takeIf { it in setOf("project_directory_missing","project_directory_unavailable","scheduled_wrapper_missing","bot_update_required","node_missing","flock_missing","timeout_missing","node_version_unsupported","dependencies_missing","project_not_writable","wrapper_exit_without_report","execution_lock_busy","execution_timeout","node_report_missing") } ?: "startup_reason_unavailable"
+                return Parsed("Node startup not confirmed: $startup. Command exit ${data.optInt("exitCode",-1)}. " +
+                    when(startup) { "bot_update_required","scheduled_wrapper_missing" -> "Update the Termux bot source before retrying."; "dependencies_missing" -> "Run npm ci in the bot directory."; else -> "See startup checks and the private claim log." },0,emptyList(),false,startup)
+            }
             val windows=data.optJSONObject("windows") ?: JSONObject()
             var successes=0; var complete=true
             val summary=(1..2).joinToString("\n") { n ->

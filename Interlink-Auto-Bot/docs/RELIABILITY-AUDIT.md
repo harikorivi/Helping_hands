@@ -53,3 +53,12 @@ No approach guarantees two claims: eligibility and confirmed server acceptance g
 - [Android 15 dataSync restrictions](https://developer.android.com/about/versions/15/behavior-changes-15#fgs-boot-completed)
 - [WorkManager timing](https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work)
 - [Termux RUN_COMMAND and result callback](https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent)
+
+
+## Follow-up evidence: 1.8-rc1 field test and 1.8-rc2 implementation
+
+On 2026-11-06 the continuous timer fired at 21:35:50.425 local for 21:35:50.359 intended (57ms measured in its event), while non-interactive and locked. The same process later exited at 21:36:25.574 with reason 10, and the service restarted only on app opening at 21:39:16. The exported log does not identify which user action caused that exit; it does not prove force-stop or a manufacturer defect.
+
+The 21:26 scheduled run was launched by foreground recovery before continuous mode was enabled. Its Termux callback returned exit 2 with no valid Node report. Exit 2 alone cannot identify whether a wrapper failed or Node completed with fewer than two confirmed claims. The old private Node log is required for a retrospective cause; 1.8-rc2 supplies safe startup preflight and fallback reports for subsequent attempts.
+
+Explicit stopWithTask=false documents Android's existing default. onTaskRemoved adds evidence and retains the timer; START_STICKY continues to request OS restart. Neither can override a true force-stop or every OEM termination policy. See the release validation artifact for actual task-removal tests and limits.

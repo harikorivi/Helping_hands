@@ -1,6 +1,6 @@
 # Interlink Auto Bot
 
-A personal Android automation project with a Node.js API client and an **Interlink Scheduler** companion app. Validation candidate **1.8-rc1** includes automatic token refresh, six daily two-window runs and optional continuous Android scheduling, an immediate connection test, and a separately confirmed single-claim action.
+A personal Android automation project with a Node.js API client and an **Interlink Scheduler** companion app. Validation candidate **1.8-rc2** includes automatic token refresh, six daily two-window runs and optional continuous Android scheduling, an immediate connection test, and a separately confirmed single-claim action.
 
 **Start with [README-mobile.md](README-mobile.md)** for a complete first-time installation. Existing users should follow its upgrade note to preserve credentials. All fixes are integrated into the source; install the matching APK from [android-companion/releases](android-companion/releases).
 

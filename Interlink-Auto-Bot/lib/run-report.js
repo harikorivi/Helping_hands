@@ -9,7 +9,9 @@ if (ID.test(attemptId) && ID.test(executionId)) {
   let data={};
   try { data=JSON.parse(fs.readFileSync(path.join(__dirname,'..','.runtime','reports',`${attemptId}.json`),'utf8')); } catch {}
   const valid=data.attemptId===attemptId && data.executionId===executionId && data.scheduledAt===scheduledAt;
-  const report={version:1,attemptId,executionId,scheduledAt,exitCode,nodeStarted:valid && data.nodeStarted===true,
+  const stage=argument(args,'--wrapper-stage','unknown');
+  const startupReason=exitCode===14 ? 'execution_lock_busy' : exitCode===124 || exitCode===137 ? 'execution_timeout' : 'node_report_missing';
+  const report={startupReason,wrapperStage:['lock_acquisition','node_execution','finished'].includes(stage)?stage:'unknown',version:1,attemptId,executionId,scheduledAt,exitCode,nodeStarted:valid && data.nodeStarted===true,
     events:valid && Array.isArray(data.events) ? data.events.slice(-100).map(e=>({event:/^[A-Z0-9_]{1,60}$/.test(e.event)?e.event:'OMITTED',actualAt:Number(e.actualAt),pid:Number(e.pid),...safe(e)})) : [],
     windows:valid ? Object.fromEntries(['1','2'].filter(n=>data.windows?.[n]).map(n=>[n,safe(data.windows[n])])) : {}};
   console.log('INTERLINK_RESULT '+JSON.stringify(report));

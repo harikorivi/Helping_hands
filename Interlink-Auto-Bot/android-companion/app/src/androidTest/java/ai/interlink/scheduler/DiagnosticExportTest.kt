@@ -11,6 +11,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DiagnosticExportTest {
+    @Test fun startupReportExplainsExitTwoAndRejectsUntrustedReason() {
+        val data=org.json.JSONObject().put("version",1).put("executionId","schedule-1").put("attemptId","a1").put("scheduledAt",1)
+            .put("nodeStarted",false).put("exitCode",2).put("startupReason","wrapper_exit_without_report")
+        val parsed=ExecutionReport.parse("INTERLINK_RESULT $data","schedule-1","a1",1)!!
+        assertEquals("wrapper_exit_without_report",parsed.startupReason)
+        assertTrue(parsed.summary.contains("exit 2"))
+        data.put("startupReason","secret-token")
+        assertFalse(ExecutionReport.parse("INTERLINK_RESULT $data","schedule-1","a1",1)!!.summary.contains("secret-token"))
+    }
+
     @Test fun liveDebugToggleGatesExtraEventsButKeepsCoreEvidence() {
         val c = InstrumentationRegistry.getInstrumentation().targetContext
         val prefs = Schedule.prefs(c)
