@@ -13,3 +13,4 @@ android-companion/local.properties
 **/build/
 *.jks
 *.keystore
+android-companion/.kotlin/

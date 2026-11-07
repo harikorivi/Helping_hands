@@ -1,4 +1,16 @@
-# Interlink Scheduler 1.8-rc2 — task removal and startup diagnosis
+# Interlink Scheduler 1.8-rc3 — backgrounding and exit descriptions
+
+[Download Interlink-Scheduler-1.8-rc3.apk](Interlink-Scheduler-1.8-rc3.apk). Version code 14, same package/signing identity. Install over the current app. No Node update is required if already using the 1.8-rc2 source.
+
+Open Scheduler and save the diagnostic log to Downloads. It rereads up to eight retained Android process-exit records and adds the public, nullable system description with redaction, reason name/code, status, importance and memory values. A new system bug report or reproduction may not be necessary to retrieve retained details. This cannot expose private system subreasons or guarantee that a description names the requester.
+
+The former close-screen control is now **Background app, keep scheduling**, using normal backgrounding and preserving the task in Recents. This is a supported operational comparison, not proof of reliable execution after arbitrary swiping or OEM termination.
+
+[Review assessment](../../docs/REVIEW-FOLLOWUP.md) · [Instructions](../../README-mobile.md) · [Validation](VALIDATION-1.8-rc3.md).
+
+SHA-256: `a88fe8869bf2ffa2ec49d40906f2936d7af2afe5c77dfba806b17931e5168f0a`.
+
+## Previous task-removal candidate 1.8-rc2
 
 [Download Interlink-Scheduler-1.8-rc2.apk](Interlink-Scheduler-1.8-rc2.apk). Version code 13, same package/signing identity. Install over the existing app; **update the Termux bot source too**. Wrapper protocol 2 is required; older source is reported as `bot_update_required` before any scheduled claim.
 

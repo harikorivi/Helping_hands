@@ -117,10 +117,19 @@ object Diagnostics {
     fun processHistory(c: Context) {
         if(Build.VERSION.SDK_INT>=30) {
             try {
-                val p=Schedule.prefs(c); val since=p.getLong("exitHistoryAt",0)
+                val p=Schedule.prefs(c); val since=p.getLong("exitDetailsAt",0)
                 val exits=c.getSystemService(ActivityManager::class.java).getHistoricalProcessExitReasons(c.packageName,0,8)
-                for(e in exits.filter { it.timestamp>since }) emit(c,"PROCESS_EXIT_OBSERVED",reason="reason_code_${e.reason}",details=JSONObject().put("exitAt",e.timestamp).put("pid",e.pid).put("status",e.status))
-                p.edit().putLong("exitHistoryAt",System.currentTimeMillis()).apply()
+                for(e in exits.filter { it.timestamp>since }) {
+                    val description=ExitEvidence.description(e.description)
+                    emit(c,"PROCESS_EXIT_OBSERVED",reason="reason_code_${e.reason}",details=JSONObject()
+                        .put("exitAt",e.timestamp).put("pid",e.pid).put("status",e.status)
+                        .put("reasonCode",e.reason).put("reasonName",ExitEvidence.name(e.reason))
+                        .put("importance",e.importance).put("pssKb",e.pss).put("rssKb",e.rss)
+                        .put("descriptionRedacted",description ?: JSONObject.NULL)
+                        .put("descriptionAvailable",description!=null).put("subReasonAvailable",false))
+                }
+                // New cursor re-reads retained historical exits once after upgrading for the added metadata.
+                p.edit().putLong("exitDetailsAt",maxOf(since,exits.maxOfOrNull { it.timestamp } ?: 0)).apply()
             } catch(_:RuntimeException) { emit(c,"PROCESS_EXIT_HISTORY_UNAVAILABLE") }
         }
     }

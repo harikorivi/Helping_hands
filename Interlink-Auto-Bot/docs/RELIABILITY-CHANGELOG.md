@@ -1,3 +1,9 @@
+# Backgrounding and public exit metadata candidate 1.8-rc3
+
+- Uses moveTaskToBack(true) for Background app, keep scheduling. It preserves the UI task instead of removing it.
+- Adds bounded redacted ApplicationExitInfo.description, numeric/named reason, status, importance and PSS/RSS. A new cursor reads retained historical records once after upgrade. Nullable descriptions and unavailable internal subreasons are explicit.
+- Records the review's useful suggestions and corrects explicit-intent, PendingIntent identity and hidden-subreason assumptions in REVIEW-FOLLOWUP.md. No root cause or OEM-specific force-stop caller is asserted.
+
 # Task removal and startup diagnosis candidate 1.8-rc2
 
 - Explicitly declares stopWithTask=false (Android's previous default), records onTaskRemoved while retaining the active timer, and adds Close screen, keep scheduling. This is not a claim that a manifest flag bypasses OEM process termination.
