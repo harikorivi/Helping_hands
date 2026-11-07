@@ -1,13 +1,13 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 1.8-rc4 (validation candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [audit](docs/RELIABILITY-AUDIT.md) and [validation plan](docs/RELIABILITY-VALIDATION.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 2.0-rc1 (continuous-service candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [service architecture decision](docs/ADR-SERVICE-ONLY.md) and [release validation](android-companion/releases/VALIDATION-2.0-rc1.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
 - **Termux** runs the Node.js bot and stores your credentials privately.
-- **Interlink Scheduler** is the companion APK with a teal clock icon. It schedules execution and provides **Test connection now** and **Claim once now** buttons. It is not the official Interlink app.
+- **Interlink Scheduler** is the companion APK with a teal clock icon. It schedules execution and provides **Test connection — no claim** and **Submit one eligible claim now** buttons. It is not the official Interlink app.
 
-You do not need cron, Termux:Boot, Termux:API, a continuously running Node process, or a connected Mac after installation. Android background execution remains subject to battery restrictions and phone manufacturer policies. Do not force-stop either app.
+Interlink Scheduler runs one continuous foreground service with a persistent notification and CPU wake lock. This intentionally increases battery use. You do not need cron, Termux:Boot, Termux:API, a continuously running Node process, or a connected Mac after installation. Android background execution remains subject to battery restrictions and phone manufacturer policies. Do not force-stop either app.
 
 > **Already using the bot?** Follow the [existing-user note](#note-for-existing-users) instead of cloning again or logging in again. Keep all existing credential and device files.
 
@@ -97,38 +97,34 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-1.8-rc4.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.8-rc4.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-2.0-rc1.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc1.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-1.8-rc4.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc1.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
 
 Find **Interlink Scheduler** by its teal clock/check-mark icon and open it. This is a personal debug-signed APK, not a Play Store release. No Mac build is needed to use the supplied APK.
 
-## 6. Complete the app's four setup sections
+## 6. Grant access to the named apps
 
-Tap each button **once**. Return to the app after changing an Android setting; status updates automatically. If a setting already shows **Allowed**, you do not need to grant it again.
+Open **Interlink Scheduler** and use the **Setup** buttons. Tap once, then return from Android Settings.
 
-| Section | App to configure | What to do |
+| Button / setting | App to configure | Required action |
 |---|---|---|
-| **1. Allow Termux commands** | **Interlink Scheduler** | Allow **Run commands in Termux environment**. If the prompt does not reopen, use Scheduler App info → Permissions → Additional permissions. |
-| **2. Allow scheduled alarms** | **Interlink Scheduler** | Open **Scheduler alarm settings** and allow **Alarms & reminders**. Android versions before 12 do not need this special permission. |
-| **3. Allow both apps in background** | **Interlink Scheduler AND Termux** | Use each named battery button. Select Battery / App battery usage → Unrestricted / No restrictions / Allow background activity, as offered by your phone. |
-| **4. Show run notifications** | **Interlink Scheduler** | Open **Scheduler notifications** and allow notifications so active executions are visible. |
+| Grant Termux command permission | Interlink Scheduler | Allow **Run commands in Termux environment**. If Android suppresses the prompt, open Scheduler App info → Permissions / Additional permissions. |
+| Allow scheduler notifications | Interlink Scheduler | Allow notifications so the continuously running service is visible. |
+| Scheduler app / battery settings | Interlink Scheduler | Allow unrestricted background power use / background activity, using the choices offered by the phone. |
+| Termux app / battery settings | Termux | Allow unrestricted background power use / background activity. |
 
-For a separate battery-optimization list, tap **Open battery optimization list**, select **All apps** if needed, and choose **Don't optimize** for **both Interlink Scheduler and Termux**. Do not select the official Interlink app for these settings.
-
-Some phones also require Auto-start permission or an additional background-activity setting. Automatic scheduling requires Android battery-optimization exemptions for both apps; the Enable/repair button explains any missing prerequisite. Manufacturer-specific restrictions still need checking separately. Settings links open the named app's App info with guidance; if a shortcut is unavailable, navigate through Android Settings → Apps manually.
+This version does **not** use AlarmManager or require **Alarms & reminders** access. Android battery exemption does not prove that an OEM will preserve the process. The affected vivo/iQOO device has recorded OEM-requested force-stops despite allowed Android settings. This release changes application structure; it does not claim to override those stops. Do not repeatedly change already-enabled permissions as a substitute for inspecting execution evidence.
 
 ## 7. Test the installation immediately
 
-In the app's **Try it now** card, tap:
+In **Interlink Scheduler**, tap **Test connection — no claim**.
 
-**Test connection now • no claim**
-
-Wait for the result in that card, allowing up to two minutes. The test starts Termux, validates/refreshes authentication, and reads account and eligibility information. It does **not** submit a claim. A successful test confirms the foreground execution path; it does not yet prove alarm delivery while the phone is locked.
+Wait for the result in the service status area, allowing up to two minutes. The test starts Termux, validates/refreshes authentication, and reads account and eligibility information. It does **not** submit a claim. A successful test confirms the foreground execution path; it does not yet prove service survival while the phone is locked.
 
 If the test fails, inspect the private log in Termux:
 
@@ -146,7 +142,7 @@ Logs report safe metadata such as request stage, HTTP status and field types. Do
 
 ## 8. Enable automatic scheduling
 
-Tap **Enable schedule**. Confirm that the top card says **Schedule is enabled** and shows the expected **Next run** in your phone's local time.
+Tap **Start / repair 24-hour scheduling**. Confirm **Schedule: enabled**, **Service: running**, **CPU wake lock: true**, and the expected **Next** local time. The notification is titled **Interlink Scheduler service**. Keep it running; closing the activity does not pause the schedule.
 
 | Run starts | Check the log after |
 |---|---|
@@ -157,9 +153,13 @@ Tap **Enable schedule**. Confirm that the top card says **Schedule is enabled** 
 | 05:26 PM | 05:35 PM |
 | 09:26 PM | 09:35 PM |
 
-Each run has two independent windows: **:26:00 through :29:59**, and **:31:00 through :33:59**. It attempts at most one submission per window, only if the server reports eligibility. Node exits after the windows; no Node process or companion execution service is required between the six daily runs. Node may sleep between the two windows within a run.
+Each run has two independent windows: **:26:00 through :29:59**, and **:31:00 through :33:59**. It attempts at most one submission per window, only if the server reports eligibility. Node exits after the windows. The single companion foreground service and its CPU wake lock stay active between sessions; Node may sleep between the two windows within one session. The six times are local clock times, not four-hour delays chained from completion.
 
-Press **Home** and turn off the screen. The app screens do not need to remain open. Swiping Recent Apps may work, but test it on your phone because manufacturer behavior varies. **Do not Force stop Termux or Interlink Scheduler.** Reopen the apps and repair the schedule after a force-stop. Reboot recovery rearms future alarms after normal unlock; missed windows are not replayed.
+You may press **Home** or swipe the Scheduler screen from Recents; its service declares `stopWithTask=false`. Android's memory-pressure restart is best effort. A manufacturer may still terminate or force-stop it. **Do not Force stop Termux or Interlink Scheduler.** Reopen Termux and Scheduler, then tap **Start / repair 24-hour scheduling** after a true force-stop. Reboot recovery starts the enabled service after normal unlock/credential-encrypted storage availability, subject to platform restrictions.
+
+Before the next real session, choose **2-minute service timer test — no claim**. Swipe Scheduler from Recents, lock the phone and leave it untouched for three minutes. On return, inspect its timer status or export diagnostics. A successful timer test proves only the companion timer, not the complete Termux/API path. The **10-minute** test checks longer survival. These probes do not launch Termux, but the normal six scheduled sessions remain enabled.
+
+Pausing with **Pause scheduled runs** or **Pause schedule** in the notification stops future sessions and releases the service/wake lock once any active execution completes or its original deadline expires. A missing callback is recorded as unknown; the same session is not resubmitted after a restart.
 
 After the next run finishes, check:
 
@@ -177,11 +177,13 @@ Look for both `WINDOW_1_*` and `WINDOW_2_*` results:
 - `NOT_ELIGIBLE`: the server did not report eligibility during the checks.
 - `FAILED`: inspect the reason. An uncertain submission may have been accepted by the server and must not be blindly retried.
 
-The scheduled maximum is 12 successful claims per day, subject to eligibility and actual execution. The `logs` directory is created when an execution wrapper starts, not by the tests. An app message saying a command was sent is not proof that a claim succeeded. Old pause events in Recent activity are history; the top card shows current status. Each alarm now records intended time, actual delivery time and delay. Tests, manual claims and scheduled runs have different completion messages. Use **Copy diagnostic history** to copy the retained history and all six registered alarm times without tokens.
+The scheduled maximum is 12 successful claims per day, subject to eligibility and actual execution. The `logs` directory and today's `claim-YYYY-MM-DD.log` are created when the scheduled wrapper actually starts. A service timer probe or manual connection test does not create that claim log. Repairing the plan does not create an empty success log.
+
+If today's claim file is missing, export diagnostics and trace **SERVICE_TIMER_FIRED → EXECUTION_DISPATCH_REQUESTED → TERMUX_DISPATCHED → NODE_PROCESS_STARTED → both CLAIM_WINDOW_*_COMPLETED → EXECUTION_COMPLETED/FAILED**. A dispatch is not proof that Node started or that a claim succeeded. Missing evidence remains unknown. Startup reasons such as `bot_update_required`, `dependencies_missing` and `wrapper_exit_without_report` appear in the app report; two window results are shown independently.
 
 ## Optional: submit one real claim now
 
-Tap **Claim once now** and read the confirmation dialog. Confirm only if you intend to submit a real claim. The action checks eligibility, submits at most once and verifies the result, without waiting for a second window. It can affect eligibility for later scheduled runs.
+Tap **Submit one eligible claim now** and read the confirmation dialog. Confirm only if you intend to submit a real claim. The action checks eligibility, submits at most once and verifies the result, without waiting for a second window. It can affect eligibility for later scheduled runs.
 
 Manual claims have a one-minute cooldown and share the bot's execution lock. An uncertain submitted manual claim blocks further manual claims pending review of the actual server outcome. Do not delete `.runtime/manual.json` to bypass that protection. Separate manual claims are not included in the scheduled maximum of 12.
 
@@ -189,14 +191,14 @@ For terminal use, `bash run-on-demand.sh test` performs the connection test. `ba
 
 ## Automatic log cleanup
 
-Version 1.6 keeps **today's and yesterday's logs**, using your phone's local calendar dates—not a rolling 48-hour interval. For example, on 8 November, logs dated 8 and 7 November remain; recognized daily logs dated 6 November or earlier are deleted.
+The bot keeps **today's and yesterday's logs**, using your phone's local calendar dates—not a rolling 48-hour interval. For example, on 8 November, logs dated 8 and 7 November remain; recognized daily logs dated 6 November or earlier are deleted.
 
 - **Termux:** at the start of each scheduled or on-demand execution, under the shared execution lock, cleanup removes older `logs/claim-YYYY-MM-DD.log` and `logs/on-demand-YYYY-MM-DD.log` files. It does not scan other directories or follow symlinks. A cleanup error is logged without blocking the claim/test execution.
-- **Companion:** old activity entries are removed when the app opens (even while scheduling is paused) and whenever a new activity event is recorded. UTC event timestamps are converted to the phone's local date. The existing limit of 100 stored entries still applies, so very busy days may retain fewer than two complete days. The UI shows the latest 20 entries.
+- **Companion:** old activity entries are removed when the app opens (even while scheduling is paused) and whenever a new activity event is recorded. UTC event timestamps are converted to the phone's local date. The existing limit of 100 stored entries still applies, so very busy days may retain fewer than two complete days. The service prunes structured diagnostics hourly; exports retain at most 4,000 structured events and 30 days of run summaries.
 
-Credentials, `.runtime` claim records, execution locks, scheduling preferences, and the latest action status are not deleted. Unknown filenames/formats and future-dated entries are preserved conservatively; app history still has its 100-entry cap. Future dates can occur after a clock correction. Cleanup takes place at the next app opening or execution, without a separate midnight timer or background daemon.
+Credentials, `.runtime` claim records, execution locks, scheduling preferences, and the latest action status are not deleted. Unknown filenames/formats and future-dated entries are preserved conservatively; app history still has its 100-entry cap. Future dates can occur after a clock correction. Cleanup runs at app opening, during service maintenance and at the next wrapper execution.
 
-Existing users must update **both the Termux repository and the version 1.6 APK** to enable cleanup in both places. No re-login is needed.
+Log cleanup never deletes the private execution ledger or credential files.
 
 ## Troubleshooting
 
@@ -206,10 +208,10 @@ Existing users must update **both the Termux repository and the version 1.6 APK*
 | Token refresh fails | Check connectivity and the log. If reauthentication is required, pause scheduling, wait for the active run to finish, then run `node index.js --login`. |
 | Unexpected eligibility response | The current code accepts HTTP 2xx with an explicit nested eligibility boolean; missing application status is allowed, but explicit errors/malformed fields are rejected. Share the safe `TEST_INVALID_RESPONSE` field-type diagnostics, not raw account data. |
 | `missed_window` | The run started after that window closed. A manually started late run does not prove an Android alarm delay. |
-| No scheduled log after minute 35 | Verify the companion's next alarm, permissions, both battery settings and the fixed checkout path. Inspect Recent activity for dispatch failure. |
+| No scheduled log after minute 35 | Check whether the service heartbeat continued through the due time. Export diagnostics and trace the stage sequence above; check the fixed checkout path and Node startup reason. |
 | Command/file missing | Confirm `~/Helping_hands/Interlink-Auto-Bot/run-on-demand.sh` exists and run setup again. Use the APK and source from this same repository version. |
 | Another run is active | Wait for it to finish. Do not remove the lock file to force overlap. |
-| Schedule stops after permission changes | Regrant the required permission, reopen the companion and tap **Repair next scheduled run**. |
+| Service stops or notification disappears | Reopen Scheduler and tap **Start / repair 24-hour scheduling**. Check retained process-exit descriptions; no guaranteed force-stop recovery is claimed. |
 
 ## Note for existing users
 
@@ -236,9 +238,9 @@ bash setup-termux.sh
 
 If Git reports local changes or conflicts, stop and preserve those changes before resolving them. Do not use a hard reset or delete the checkout: it may contain your credentials. Earlier manually copied fixes can cause such conflicts.
 
-3. For the reliability update from 1.3 or earlier, **both the Termux source and the APK must be updated**. The fix replaces a suspend-sensitive clock comparison and changes single chained alarms to six independent daily slots. Stored credentials and claim ledgers are preserved. Late delivery never creates a catch-up claim, and delayed completion events identify their original run.
-4. Install the current repository APK over the old app using **Update**, without uninstalling first. Updates require a matching signing key; if Android reports a signature mismatch, resolve that before proceeding.
-5. Run **Test connection now • no claim**, then enable/repair the schedule. Only reauthenticate if your stored credentials cannot refresh.
+3. Install **Interlink-Scheduler-2.0-rc1.apk** over the old app using **Update**, with the same signing key. Do not uninstall first. The new single service replaces old alarm/monitor modes and cancels their pending alarms once. Credentials, Node ledger and retained diagnostic history remain. Previous timer probes/cycling settings are retired. An enabled schedule restarts on app update/open, so pause before updating if you do not want scheduled work to resume yet.
+4. Tap **Test connection — no claim**, then **Start / repair 24-hour scheduling**. Confirm the service/wake-lock status and notification. Only reauthenticate if stored credentials cannot refresh.
+5. Source from 1.8-rc2 or later already provides wrapper protocol 2; no new Node authentication workflow is required. Updating source and APK together is the supported installation path.
 
 ### Only if migrating from the old cron setup
 
@@ -278,164 +280,13 @@ cd Interlink-Auto-Bot/android-companion
 gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
 ```
 
-The output is `app/build/outputs/apk/debug/app-debug.apk`. Verify its signature with the SDK's `apksigner` before distributing it. Keep a consistent private signing key for updates; never commit that key. The published personal build is debug-signed. Android UI and settings navigation have been inspected in an emulator; end-to-end background claims on the user's physical phone still require the acceptance checks.
+The output is `app/build/outputs/apk/debug/app-debug.apk`. Verify its signature with the SDK's `apksigner` before distributing it. Keep a consistent private signing key for updates; never commit that key. The published personal build is debug-signed. Android UI and settings navigation have been inspected in an emulator; physical vivo overnight survival and real two-window eligibility still require device acceptance. Emulator success does not certify Funtouch OS behavior.
 
 See [ANDROID-ARCHITECTURE.md](ANDROID-ARCHITECTURE.md) for the architecture review, security model, file responsibilities, alternatives, and testing matrix.
 
-## Reliability behavior in 1.4
 
-All six daily alarm slots are registered with Android at once; delivery of one alarm is not required to register the next slot. Each delivered slot rearms its own next-day occurrence. Reboot, app update, clock/timezone changes and reopening an overdue schedule rebuild future alarms. Recovery logs are explicitly different from alarm-delivery logs. Duplicate or replaced alarm intents do not launch another command.
+## Export evidence without USB or copying a long screen
 
-The Node runtime uses a Linux/Android suspend-aware uptime source instead of `performance.now()` when detecting real clock changes. It checks the original wall-clock window before every HTTP request and on each resumed wait. It no longer represents a clock problem as infinite time or falsely labels a future window missed. Real clock/timezone changes receive a specific failure reason.
+Tap **Save diagnostic log to Downloads** and wait for the saved confirmation. On Android 10+, open **Files → Downloads → Interlink Scheduler** and share the newest `Interlink-diagnostics-*.txt` file. Android 8/9 opens a file picker. No storage permission is needed. The export contains companion metadata and imported safe Node results, never Termux credential files or raw API responses.
 
-The companion checks both wall-clock and Android elapsed-realtime deadlines. If Android suspends the process, it cleans up on the first available callback after resume; it cannot execute cleanup while the OS refuses CPU time. The Node runner independently refuses late requests. An in-flight request may already have been accepted by the server and is never blindly retried. A missing callback does not block future alarms; delayed callbacks cannot terminate a newer run.
-
-`run-scheduled.sh` logs entry before checking the execution lock. A busy lock returns a distinct non-success result. The log therefore distinguishes a wrapper that started but was busy from a command that never reached Termux. The intended alarm timestamp travels through the wrapper, preventing a very late command from being treated as a fresh scheduled window.
-
-Emulator and simulated-clock tests improve confidence but do not guarantee OEM overnight behavior. After upgrading, verify one locked-screen scheduled execution and use **Copy diagnostic history** if it fails. Never force-stop either app.
-
-
-## Background alarm diagnosis and recovery (1.6)
-
-Exact-alarm **capability** is Android's `canScheduleExactAlarms()` result. It can be available through a battery exemption; it does not prove that the separate Alarms & reminders toggle is granted, nor that an alarm was delivered. See [Android AlarmManager](https://developer.android.com/reference/android/app/AlarmManager#canScheduleExactAlarms()).
-
-For a no-claim background test:
-
-1. Complete setup for both apps. Tap **Test background alarm • in 2 minutes** once. It also works with the daily schedule paused.
-2. Press Home and lock the screen. After three minutes, reopen the app and copy diagnostic history.
-3. Look for **Background test alarm delivered**, **Run service entered**, command dispatch and the connection result. Registration alone is not success. The test uses the same exact-alarm mechanism and Termux execution service as scheduled runs, but never invokes claim mode.
-4. Repeat separately after swiping the scheduler from Recent Apps. Record which condition you tested. Do not force-stop either app. Avoid testing around the daily claim windows (minutes 24–34 at scheduled hours); the bot reserves those minutes and reports a deferred test. Frequent idle tests can also be affected by Android alarm throttling.
-5. If there is no delivery, send diagnostic history including device/version information. A delayed delivery is recorded even if it is too late to execute. This test has a two-minute execution deadline from its intended alarm time.
-
-A pending test can be cancelled independently. Pausing future runs cancels pending diagnostic alarms too; an already dispatched command may finish.
-
-Opening or manually repairing an enabled schedule during its original :26–:34 execution period now attempts the remaining windows. At 13:29:35 the original 13:26 timestamp is retained, and execution must still stop at 13:34. Closed windows are skipped, and the shared lock and persistent claim ledger prevent duplicate submissions. This is recorded as **foreground recovery**, not alarm delivery. Opening after :34 never replays expired claims. Background reboot/time-change recovery rearms future slots; it does not launch a catch-up service.
-
-**Known limitation:** the missing alarm on the reported iQOO 7/Funtouch OS 14 has not been reproduced conclusively on that device. Version 1.6 fixes foreground recovery and adds diagnostics; it does not claim to cure manufacturer-specific suppression or force-stop behavior.
-
-Existing users: pause the schedule, let an active run finish, update the repository and install the 1.6 APK over the existing app. Open it and repair the schedule. If Git reports local patch conflicts, preserve them with `git stash push --include-untracked -m "Phone backup before update"`, then `git pull --ff-only`; do not reapply old patches automatically. Keep the stash as a backup. Credentials ignored by Git remain in place; no new login is required if they still work.
-
-### When USB and wireless debugging are unavailable
-
-Use the separate [Alarm Delivery Check app](android-companion/alarm-diagnostics/README.md). Its offline two-minute/ten-minute tests record actual receiver delivery and app-opening times, then provide a copyable report. It needs no network or Termux access and makes no claims. It tests its own alarms, not another app's private state, so results must be compared with the scheduler's diagnostics.
-
-
-## Migrating to the evidence-driven validation candidate (1.8-rc4)
-
-Pause the schedule and let the current run finish. In Termux:
-
-```sh
-cd ~/Helping_hands
-git pull --ff-only
-cd Interlink-Auto-Bot
-bash setup-termux.sh
-```
-
-If Git refuses because of older local patches, preserve them with `git stash push --include-untracked -m "Phone patches before diagnostic candidate"` and retry the pull. Do not automatically pop old patches onto the current implementation. Ignored credentials/claim state remain private and untouched.
-
-Install **Interlink-Scheduler-1.8-rc4.apk** over the existing app using the same signing key. Do not uninstall first. Open the app, repair once and enable the schedule. Both Node source and APK must be upgraded: an old wrapper returns no structured result, which is displayed as **UNKNOWN**, even if its exit code is zero. No re-login is required if stored credentials still refresh.
-
-The **Execution evidence** card shows delivery statistics, last success/failure/miss/unknown, and each reported window's outcome and reason. **Copy structured execution report** exports JSONL. **Copy diagnostic history** also includes this evidence. Reports do not include raw HTTP responses, tokens, account information, passcodes or OTPs. Android environment snapshots belong to the event time; Node events have `device=null` and a separately labelled `deviceAtImport` snapshot because Termux cannot observe that historical Android state.
-
-If a run was dispatched but no callback arrives, the dashboard marks it unknown at the next reconciliation. It never assumes a timeout proves that the server rejected a claim. Submitted markers remain in the private ledger; no uncertain submission is blindly retried. Compare the private `logs/claim-YYYY-MM-DD.log` when callback evidence is unavailable.
-
-Use the new **4-hour** and **8-hour** connection probes for preliminary long-idle testing. They make no claim, but only one probe may be pending. These probes cannot replace validation of six daily scheduled runs and both real claim windows. Follow T1–T18 in the validation plan before accepting this candidate.
-
-Event details are retained for today/yesterday, bounded at 4,000 Android events. Aggregate per-run outcomes are retained for 30 days for reliability statistics; this does not prune the Node claim ledger. Node callback reports under `.runtime/reports` are diagnostic-only and cleaned on a later run after their local-day retention expires. Power broadcasts are recorded only while the process exists; the app does not keep itself alive to observe them.
-
-
-### Save a diagnostic log without copying text
-
-In **Interlink Scheduler 1.8-rc4**, open **Execution evidence → Save diagnostic log to Downloads**. Wait for the saved confirmation. On Android 10 and newer, open your phone's **Files / File Manager → Downloads → Interlink Scheduler** and share the newest `Interlink-diagnostics-*.txt` as a file attachment. No USB, pairing, clipboard paste or storage permission is needed. Android 8/9 instead opens a file picker; choose Downloads and tap Save.
-
-The file contains companion activity, current device state, scheduled times, retained execution summaries and structured events. It does not include raw Termux logs or credential files. It includes device information and execution times, so share it only with the intended recipient. Exported copies remain until you delete them; the app's two-day event cleanup does not delete Downloads exports.
-
-This export update does not fix the reported alarm delay until screen unlock. The user observed delayed background execution without opening Scheduler; treat that separately from foreground app-open recovery. The precise OS cause remains unconfirmed.
-
-
-### Configurable live testing (1.8-rc4)
-
-1. Open **Interlink Scheduler → Live testing diagnostics** and enable **Live debug logging**. It is off by default and remembers your selection.
-2. Tap **Record system state now** to mark your test's starting conditions.
-3. Start one background test, then leave the app and lock the phone. Note the intended time and the time you unlock. Avoid scheduling repeated probes near a real scheduled run.
-4. After the test, open Scheduler and select **Save diagnostic log to Downloads**. Share the newest text file from **Downloads → Interlink Scheduler**. You do not need to paste its contents.
-5. Turn **Live debug logging** off after testing. Core alarm, execution and claim-result logging continues.
-
-Extra events include `APP_FOREGROUND`, `APP_BACKGROUND`, `SCREEN_ON_OBSERVED`, `SCREEN_OFF_OBSERVED`, `USER_UNLOCK_OBSERVED` and observed power changes. Events include interactive/lock state, idle state, battery saver, charging, standby bucket, network state, process ID, elapsed time, model and Android version. The manual snapshot works even with live debug off.
-
-App background means the activity is no longer visible; it cannot distinguish Home, swiping Recents, screen lock or opening another screen. Screen off does not prove Doze. Dynamic observers only work while the process exists, and timestamps describe when the app observed an event. Missing events during process death cannot be reconstructed. No always-running service, polling or extra wake lock is introduced. This release does not fix the reported unlock-dependent alarm delay.
-
-
-### Alarm-clock comparison: one test at a time (1.8-rc4)
-
-Install the new APK over the existing app. No Node change or login is needed if already using the 1.7-rc1 source. In Scheduler, enable **Live debug logging**, then tap **Test alarm-clock delivery • in 10 minutes**. This uses `setAlarmClock()` for this single test only. Lock the phone, leave it untouched for 12 minutes, and note any call or other wake-up. Do not start another test meanwhile. Afterward save the diagnostic log to Downloads and share the file.
-
-This is a user-visible alarm-clock test: Android may show an upcoming-alarm indicator, tapping it opens Scheduler, and delivery posts a notification that may sound according to notification settings. Notification access must be enabled. No full-screen takeover, continuous service or extra wake lock is added. It checks connection/authentication through Termux when delivered within its two-minute deadline; it does not submit claims. **Cancel background alarm test** cancels it. Any new probe replaces the previous pending probe.
-
-Structured registration/receiver events identify `alarm_clock_probe`; existing standard tests use `connection_probe`. Six daily claim runs still use the standard exact-idle mechanism. A short successful test is not sufficient for changing the production schedule: long locked-screen validation on the affected phone remains required. Opening the app does not replay an overdue probe.
-
-
-### Optional continuous scheduling mode (1.8-rc4)
-
-After updating **both** the Node source (at least 1.7-rc1) and the APK, open Interlink Scheduler. Ensure the six daily schedule is enabled, then tap **Start continuous scheduling** and confirm the battery cost. Keep the visible **Interlink continuous scheduling** notification. The app holds a partial CPU wake lock between runs and uses an in-process timer at each registered start time. Android exact alarms remain registered as a second trigger. The shared per-window ledger and delivery marker prevent duplicate requests. Stop the mode with **Stop continuous scheduling** in the app or **Stop monitoring** on its notification. Pausing the schedule also stops it.
-
-This is the battery-intensive option for testing the affected vivo phone. Expect noticeably higher battery use; check the phone's battery usage after the first night. The service does not continuously run Node or cron. It may be killed by the manufacturer and cannot run after a true Android force-stop. A reboot or app update requests restart, but Android can reject background service startup; opening Scheduler shows **Requested** and **Service running now** separately and retries while the app is open. If the service is not running, the ordinary alarms remain but have already shown late/missed delivery on this device.
-
-For a quick test, tap **Test continuous timer • in 2 minutes** while the service shows running, lock the phone and leave it untouched for 3 minutes. The notification should report firing without any claim. Save the diagnostic log; look for `MONITOR_TEST_PLANNED` followed by `MONITOR_TEST_TIMER_FIRED` and its delay. This tests the wake lock and in-process timer only.
-
-For the first full locked-screen claim test, leave the phone locked across one actual 01:26/05:26/09:26/13:26/17:26/21:26 slot. Then save the diagnostic log to Downloads. Look for `MONITOR_TIMER_FIRED` and `MONITOR_SLOT_ACCEPTED` near the scheduled time, followed by Termux/Node and both independent window results. If the monitor is killed, the report may only contain a later process-exit record; it cannot invent the missing event. Do not manually claim during the same slot. Physical overnight reliability is still unverified until this evidence is collected.
-
-
-### Updating for startup diagnosis (1.8-rc4)
-
-This update needs the **Termux source as well as the APK** because the scheduled wrapper now declares protocol version 2. Pause the schedule and stop continuous monitoring before updating; re-enable them afterward. Preserve credentials and the execution ledger. In Termux:
-
-```sh
-cd ~/Helping_hands
-git pull --ff-only
-cd Interlink-Auto-Bot
-npm ci --ignore-scripts
-```
-
-If Git reports local modifications, preserve them before updating; do not reset or delete credentials/ledger to fix a pull. An older wrapper is now identified as `bot_update_required` before any scheduled claim is attempted.
-
-The companion performs offline checks of the fixed project directory, required files, Node version, dependencies, `flock`, `timeout` and the wrapper protocol. New `TERMUX_STARTUP_FAILED` events report a safe reason. `wrapper_exit_without_report` preserves the original exit number, including 2, while keeping raw stdout/stderr private. If Node produced its correlated result, each window's actual reason remains authoritative. The historical exit 2 cannot be reconstructed from its number alone.
-
-Continuous mode explicitly keeps the service after UI task removal and records `MONITOR_TASK_REMOVED` if Android delivers that callback. **Close screen, keep scheduling** closes the app's UI task while keeping the service requested. Existing `START_STICKY` behavior requests OS restart after ordinary process death; OEM force-stop/termination may still suppress it. A missing callback cannot prove which action occurred.
-
-
-After updating, verify installation offline without authentication or claims:
-
-```sh
-cd ~/Helping_hands/Interlink-Auto-Bot
-bash android-companion/app/src/main/assets/termux-bootstrap.sh "$PWD" 1 installation-check installation-check --check-only
-```
-
-Expected result: `startupReason` is `installation_checks_passed` and `exitCode` is `0`. `nodeStarted:false` is expected for this check because it does not start the bot. Any other startup reason identifies the installation problem to resolve before the next scheduled run.
-
-
-### Exit descriptions without a system bug report (1.8-rc4)
-
-If already using the 1.8-rc2 bot source, this Android update only needs the new APK. Install over the current app. Open Scheduler once, then **Save diagnostic log to Downloads**. It reads Android's retained history for this app (up to eight recent exits) and adds `descriptionRedacted`, numeric reason, reason name, status, importance and memory values. This may provide details about the earlier termination without reproducing it. The description is optional and its format varies; it is not guaranteed to reveal the killing process. Internal subreasons are not available through the public SDK.
-
-**Background app, keep scheduling** now uses normal backgrounding and keeps the UI task in Recents. For this comparison, use that button or Home and leave the task in Recents. This does not fulfill arbitrary-swipe reliability; it checks whether removal contributes to the later termination. If you test another run, leave it for at least ten minutes so the report covers the previously observed delayed process death.
-
-Android battery exemption does not report proprietary iManager Auto-start, Associated startup or background-power settings. Record the exact option names and values separately; unavailable options remain unknown. If generating a full system bug report stalls, this app's exit-history export is an alternative source of limited evidence, not a privileged system trace.
-
-
-### Optional wake-lock cycling experiment (1.8-rc4)
-
-The user has already enabled the available iQOO/Funtouch settings; do not keep repeating that setup request. The iManager UI does not need to be opened for the system component `com.vivo.abe` to act. Own-app Android exit descriptions explicitly name that component as requesting force-stop. The policy that triggered those requests remains unknown.
-
-This APK adds an **off-by-default experiment**, not a claimed OEM bypass. With **experimental wake-lock cycling** enabled, Scheduler's monitor and execution service release and immediately reacquire their own wake locks every 120 seconds. The bounded execution service uses the earlier original wall-clock/elapsed deadline, so cycling cannot extend a claim window. Termux's own locks are not changed. This does not materially reduce continuous-mode battery consumption and has not been shown to reset any vivo counter.
-
-For one controlled no-claim survival comparison:
-
-1. Install the APK over the existing app. No Node update is needed if using the 1.8-rc2 source.
-2. Outside a reserved claim window, stop continuous scheduling if it is already running so the trial starts fresh.
-3. Tap **Enable experimental wake-lock cycling**, confirm, then **Start continuous scheduling**.
-4. Tap **Test service survival • in 10 minutes**. This probe replaces any pending continuous timer probe and submits no claims itself. Normal scheduled claims still run if their slot occurs, so choose a non-overlapping time.
-5. Repeat the same Recents swipe and screen-lock sequence as the previous test. Leave the phone untouched for **12 minutes**, noting any incoming call or other wake-up.
-6. Open Scheduler and save the diagnostic log to Downloads. Check for cycling=true, multiple WAKE_LOCK_CYCLED events, MONITOR_TEST_TIMER_FIRED and any later process exit description.
-
-A single successful probe is preliminary evidence only. Compare identical conditions with cycling disabled/enabled before selecting a long-term mode. Disable the experiment if it does not improve survival. No accessibility/listener permission or system-package disabling is introduced.
+Enable **Live screen, unlock and power-state logging** during testing to record activity foreground/background and observed screen/power broadcasts. Core scheduling/execution events, heartbeat and retained process-exit descriptions are always recorded. Device state is sampled asynchronously: `actualAt` is the event time, `deviceSampledAt` is the later state-sampling time, and `deviceAtImport` is callback-time state for imported Node events. A killed process cannot log the interval when it was absent.

@@ -1,6 +1,6 @@
 # Interlink Auto Bot
 
-A personal Android automation project with a Node.js API client and an **Interlink Scheduler** companion app. Validation candidate **1.8-rc4** includes automatic token refresh, six daily two-window runs and optional continuous Android scheduling, an immediate connection test, and a separately confirmed single-claim action.
+A personal Android automation project with a Node.js API client and an **Interlink Scheduler** companion app. Validation candidate **2.0-rc1** includes automatic token refresh, six daily two-window runs and one continuous Android foreground scheduling service, an immediate connection test, and a separately confirmed single-claim action.
 
 **Start with [README-mobile.md](README-mobile.md)** for a complete first-time installation. Existing users should follow its upgrade note to preserve credentials. All fixes are integrated into the source; install the matching APK from [android-companion/releases](android-companion/releases).
 
@@ -9,7 +9,7 @@ A personal Android automation project with a Node.js API client and an **Interli
 - Credentials remain private in Termux. Do not commit token, device, proxy-credential or log files.
 - Android execution is subject to Doze and manufacturer restrictions; force-stop recovery is not guaranteed.
 
-The affected phone’s missing-alarm root cause remains open. This candidate is not production-validated. See the [architecture audit](docs/RELIABILITY-AUDIT.md) and [T1–T18 validation gate](docs/RELIABILITY-VALIDATION.md).
+The user accepts a resident service and CPU wake lock. This replaces alarm/monitor modes while preserving the existing Node workflow. Recorded OEM-requested force-stops remain outside ordinary app recovery. Physical overnight acceptance is pending; see the [service architecture decision](docs/ADR-SERVICE-ONLY.md) and [executed validation](android-companion/releases/VALIDATION-2.0-rc1.md).
 
 Development checks:
 

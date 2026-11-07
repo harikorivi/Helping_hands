@@ -8,9 +8,23 @@ import android.net.*
 import android.os.*
 import org.json.JSONObject
 import java.time.*
+import java.util.concurrent.*
 
 /** Private durable evidence. Failure to save is surfaced, never silently treated as successful evidence. */
 object Diagnostics {
+    private val worker = Executors.newSingleThreadExecutor { job -> Thread(job,"InterlinkEvidence").apply { isDaemon=true } }
+    private val onWorker=ThreadLocal<Boolean>()
+    fun work(job:()->Unit) {
+        if(onWorker.get()==true) { job(); return }
+        worker.execute {
+            onWorker.set(true)
+            try { job() } catch(e:RuntimeException) { android.util.Log.e("InterlinkDiagnostics","Evidence failed: ${e.javaClass.simpleName}") }
+            finally { onWorker.remove() }
+        }
+    }
+    private fun flush() {
+        if(onWorker.get()!=true) worker.submit {}.get(10,TimeUnit.SECONDS)
+    }
     private var helper: SQLiteOpenHelper? = null
     @Synchronized private fun db(c: Context): SQLiteDatabase {
         if (helper == null) helper = object : SQLiteOpenHelper(c.applicationContext,"execution-diagnostics.db",null,1) {
@@ -38,18 +52,25 @@ object Diagnostics {
             .put("keyguardLocked",c.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked)
             .put("deviceLocked",c.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked)
             .put("manufacturer",Build.MANUFACTURER).put("model",Build.MODEL)
-            .put("liveDebugEnabled",liveDebug(c)).put("wakeLockCycling",Schedule.prefs(c).getBoolean("wakeLockCycling",false))
+            .put("liveDebugEnabled",liveDebug(c)).put("schedulingMode","foreground_service")
+            .put("serviceRunning",RunService.running).put("wakeHeld",RunService.wakeHeld)
+            .put("processStartElapsedMs",Process.getStartElapsedRealtime())
             .put("standbyBucket",if(Build.VERSION.SDK_INT>=28) c.getSystemService(UsageStatsManager::class.java).appStandbyBucket else -1)
-            .put("exactAlarmCapability",Schedule.allowed(c)).put("batteryExempt",pm.isIgnoringBatteryOptimizations(c.packageName))
+            .put("batteryExempt",pm.isIgnoringBatteryOptimizations(c.packageName))
             .put("networkAvailable",caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true)
             .put("networkValidated",caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)==true)
             .put("pid",Process.myPid()).put("elapsedMs",SystemClock.elapsedRealtime())
     }
-    @Synchronized fun emit(c: Context,event: String,at: Long=0,executionId: String=if(at>0) id(at) else "system",
+    fun emit(c: Context,event: String,at: Long=0,executionId: String=if(at>0) id(at) else "system",
                           status: String="observed",reason: String="",details: JSONObject=JSONObject(),actual: Long=System.currentTimeMillis(),source: String="android") {
+        val observedElapsed=SystemClock.elapsedRealtime()
+        val copied=JSONObject(details.toString())
+        work { persist(c,event,at,executionId,status,reason,copied,actual,source,observedElapsed) }
+    }
+    private fun persist(c:Context,event:String,at:Long,executionId:String,status:String,reason:String,details:JSONObject,actual:Long,source:String,observedElapsed:Long) {
         try {
             val row=JSONObject().put("event",event).put("executionId",executionId).put("scheduledAt",if(at>0) at else JSONObject.NULL)
-                .put("actualAt",actual).put("recordedAt",System.currentTimeMillis()).put("status",status).put("reason",reason).put("source",source).put("details",details)
+                .put("actualAt",actual).put("observedElapsedMs",observedElapsed).put("processStartElapsedMs",Process.getStartElapsedRealtime()).put("recordedAt",System.currentTimeMillis()).put("deviceSampledAt",System.currentTimeMillis()).put("status",status).put("reason",reason).put("source",source).put("details",details)
             // Node cannot observe Android power state: callback-time state is explicitly separate.
             if(source=="android") row.put("device",device(c)) else row.put("device",JSONObject.NULL).put("deviceAtImport",device(c))
             db(c).insertOrThrow("events",null,ContentValues().apply { put("at",System.currentTimeMillis()); put("payload",row.toString()) })
@@ -58,19 +79,19 @@ object Diagnostics {
             android.util.Log.e("InterlinkDiagnostics","Diagnostic persistence failed: ${e.javaClass.simpleName}")
         }
     }
-    @Synchronized fun registered(c: Context, at: Long) {
+    fun registered(c: Context, at: Long) = work {
         try { db(c).execSQL("INSERT OR IGNORE INTO runs(executionId,scheduledAt,status) VALUES(?,?,?)",arrayOf(id(at),at,"registered")) }
         catch(e: RuntimeException) { emit(c,"DIAGNOSTIC_STORAGE_FAILED",at,reason=e.javaClass.simpleName) }
     }
-    @Synchronized fun outcome(c: Context, at: Long, status: String, reason: String, result: String="", delivered: Long?=null) {
-        if(at<=0) return
+    fun outcome(c: Context, at: Long, status: String, reason: String, result: String="", delivered: Long?=null) = work {
+        if(at<=0) return@work
         registered(c,at)
         try {
             val values=ContentValues().apply { put("status",status); put("reason",reason); if(result.isNotEmpty()) put("result",result); if(delivered!=null) put("deliveredAt",delivered) }
             db(c).update("runs",values,"executionId=?",arrayOf(id(at)))
         } catch(e: RuntimeException) { emit(c,"DIAGNOSTIC_STORAGE_FAILED",at,reason=e.javaClass.simpleName) }
     }
-    @Synchronized fun prune(c: Context) {
+    fun prune(c: Context) = work {
         try {
             val cutoff=LocalDate.now().minusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             db(c).delete("events","at < ?",arrayOf(cutoff.toString()))
@@ -78,9 +99,10 @@ object Diagnostics {
             db(c).delete("runs","scheduledAt < ?",arrayOf((System.currentTimeMillis()-30L*86400000).toString()))
         } catch(e: RuntimeException) { emit(c,"DIAGNOSTIC_STORAGE_FAILED",reason=e.javaClass.simpleName) }
     }
-    @Synchronized fun report(c: Context): String = try {
+    fun report(c: Context): String = try {
+        flush()
         val lines=mutableListOf<String>()
-        db(c).rawQuery("SELECT payload FROM events ORDER BY id",null).use { while(it.moveToNext()) lines.add(it.getString(0)) }
+        db(c).rawQuery("SELECT payload FROM (SELECT id,payload FROM events ORDER BY id DESC LIMIT 4000) ORDER BY id",null).use { while(it.moveToNext()) lines.add(it.getString(0)) }
         dashboard(c)+"\nEvents JSONL (today/yesterday, max 4000; deviceAtImport is NOT historical Node power state):\n"+lines.joinToString("\n")
     } catch(e:RuntimeException) { "Diagnostic read failed: ${e.javaClass.simpleName}" }
     @Synchronized fun dashboard(c: Context): String = try {
@@ -90,7 +112,7 @@ object Diagnostics {
         }
         var stats=""
         db(c).rawQuery("SELECT COUNT(*),COUNT(deliveredAt),AVG(deliveredAt-scheduledAt),MAX(deliveredAt-scheduledAt) FROM runs WHERE scheduledAt<=? AND status!='cancelled'",arrayOf(System.currentTimeMillis().toString())).use {
-            it.moveToFirst(); stats="Due registered slots: ${it.getInt(0)}; receiver deliveries: ${it.getInt(1)}; mean latency: ${if(it.isNull(2)) "n/a" else "${it.getLong(2)}ms"}; max: ${if(it.isNull(3)) "n/a" else "${it.getLong(3)}ms"}."
+            it.moveToFirst(); stats="Due planned slots: ${it.getInt(0)}; recorded triggers: ${it.getInt(1)}; mean latency: ${if(it.isNull(2)) "n/a" else "${it.getLong(2)}ms"}; max: ${if(it.isNull(3)) "n/a" else "${it.getLong(3)}ms"}."
         }
         val last=mutableListOf<String>()
         for((title,phase) in listOf("Last successful run" to "success","Last failed/incomplete run" to "incomplete","Last missed run" to "missed","Last unknown run" to "unknown","Last dispatch failure" to "failed")) {
@@ -98,23 +120,14 @@ object Diagnostics {
                 last.add("$title: "+if(it.moveToFirst()) "${Schedule.time(it.getLong(0))} ${it.getString(1)}" else "No evidence yet")
             }
         }
-        for(name in listOf("ALARM_SCHEDULED","ALARM_RECEIVED")) {
+        for(name in listOf("SCHEDULE_PLANNED","SERVICE_TIMER_FIRED","SERVICE_HEARTBEAT","SCHEDULER_SERVICE_STOPPED")) {
             db(c).rawQuery("SELECT payload FROM events WHERE payload LIKE ? ORDER BY id DESC LIMIT 1",arrayOf("%\"event\":\"$name\"%")).use {
                 if(it.moveToFirst()) { val row=JSONObject(it.getString(0)); last.add("Last $name: ${Schedule.time(row.getLong("actualAt"))} (${row.getString("executionId")})") }
             }
         }
         "Evidence since this diagnostic version (run summaries retained 30 days):\n$stats\n"+last.joinToString("\n")+"\n\n"+rows.joinToString("\n\n")
     } catch(e: RuntimeException) { "Diagnostic read failed: ${e.javaClass.simpleName}" }
-    fun reconcileActive(c: Context) {
-        val p=Schedule.prefs(c); val active=p.getString("activeId",null) ?: return
-        if(p.getLong("activeUntil",0)<System.currentTimeMillis()) {
-            val at=p.getLong("runTime:$active",0)
-            emit(c,"EXECUTION_FAILED",at,status="unknown",reason="deadline_passed_without_callback",details=JSONObject().put("attemptId",active))
-            if(p.getString("activeMode","")=="scheduled") outcome(c,at,"unknown","deadline_passed_without_callback; claim outcome unknown")
-            p.edit().remove("activeId").remove("activeUntil").remove("active").remove("activeMode").commit()
-        }
-    }
-    fun processHistory(c: Context) {
+    fun processHistory(c: Context) = work {
         if(Build.VERSION.SDK_INT>=30) {
             try {
                 val p=Schedule.prefs(c); val since=p.getLong("exitDetailsAt",0)
@@ -148,9 +161,12 @@ class DiagnosticApplication : android.app.Application() {
     }
     override fun onCreate() {
         super.onCreate()
-        val filter=IntentFilter().apply { addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED); addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED); addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_USER_PRESENT) }
-        if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED) else registerReceiver(receiver,filter)
-        // Dynamic receiver exists only while this process lives; no resident monitoring service.
-        Diagnostics.emit(this,"PROCESS_STARTED")
+        // Queue evidence and Binder sampling; foreground promotion must not wait for SQLite or power APIs.
+        Diagnostics.emit(this,"PROCESS_STARTED",details=JSONObject().put("processStartElapsedMs",Process.getStartElapsedRealtime())
+            .put("applicationOnCreateElapsedMs",SystemClock.elapsedRealtime()))
+        Diagnostics.work {
+            val filter=IntentFilter().apply { addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED); addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED); addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_USER_PRESENT) }
+            if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED) else registerReceiver(receiver,filter)
+        }
     }
 }

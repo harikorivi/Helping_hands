@@ -5,393 +5,158 @@ import android.app.*
 import android.content.*
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.*
 import android.provider.Settings
 import android.view.View
 import android.widget.*
-import java.time.*
-import java.time.format.DateTimeFormatter
+import java.util.concurrent.Executors
 
-/** Personal scheduler setup: every setting names its target app and reports its state. */
-class MainActivity : Activity() {
-    private lateinit var content: LinearLayout
-    private var exportInProgress = false
-    private fun exportReport() {
-        if (exportInProgress) return
-        if (Build.VERSION.SDK_INT < 29) {
-            try {
-                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TITLE, DiagnosticExport.fileName())
-                }, 40)
-            } catch (_: RuntimeException) { explain("Cannot save report", "This phone has no available file picker. The copy buttons are still available.") }
-            return
-        }
-        saveReport(null)
+/** The service is the scheduler; closing this activity does not pause it. */
+class MainActivity:Activity() {
+    private lateinit var body:LinearLayout
+    private lateinit var status:TextView
+    private lateinit var evidence:TextView
+    private val exports=Executors.newSingleThreadExecutor()
+    private var pendingExport:String?=null
+    private var generation=0
+    private val handler=Handler(Looper.getMainLooper())
+    private val refresh=object:Runnable { override fun run() { refreshStatus(); handler.postDelayed(this,5000) } }
+    private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+    private fun text(value:String,size:Float=16f):TextView = TextView(this).apply {
+        text=value; textSize=size; setTextColor(Color.rgb(28,49,57)); setPadding(0,dp(8),0,dp(8)); body.addView(this)
     }
-    private fun saveReport(destination: Uri?) {
-        if (exportInProgress) return
-        exportInProgress = true
-        Toast.makeText(this,"Saving diagnostic report…",Toast.LENGTH_SHORT).show()
-        val app = applicationContext
-        Thread {
-            val name = DiagnosticExport.fileName()
-            val message = try {
-                val report = DiagnosticExport.snapshot(app)
-                if (destination != null) DiagnosticExport.write(app,destination,report)
-                else if (Build.VERSION.SDK_INT >= 29) DiagnosticExport.saveToDownloads(app,name,report)
-                else throw java.io.IOException("No destination")
-                if (destination == null) "Saved to Downloads → Interlink Scheduler → $name. Open Files / File Manager to share this file."
-                else "Diagnostic report saved to your chosen location. Open Files / File Manager to share it."
-            } catch (error: Exception) {
-                "Could not save the report (${error.javaClass.simpleName}). Check available storage and try again."
-            }
-            runOnUiThread {
-                exportInProgress = false
-                if (!isFinishing && !isDestroyed) explain("Diagnostic export",message)
-            }
-        }.start()
+    private fun button(label:String,action:()->Unit) {
+        body.addView(Button(this).apply { text=label; isAllCaps=false; setOnClickListener { action() } },LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(8) })
     }
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode,resultCode,data)
-        if (requestCode == 40 && resultCode == RESULT_OK) data?.data?.let { saveReport(it) }
-    }
-    private val ink = Color.rgb(20, 42, 54)
-    private val teal = Color.rgb(21, 94, 117)
-    private val commandPermission = "com.termux.permission.RUN_COMMAND"
-    private val handler = Handler(Looper.getMainLooper())
-    private val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-        handler.post { if (!isFinishing) render() }
-    }
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun granted(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-    private fun installed(): Boolean = try { packageManager.getApplicationInfo("com.termux", 0); true } catch (_: PackageManager.NameNotFoundException) { false }
-    private fun batteryExempt(pkg: String) = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(pkg)
-    private fun box(parent: LinearLayout): LinearLayout {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(16), dp(18), dp(16))
-            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(18).toFloat() }
-        }
-        parent.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
-        return card
-    }
-    private fun text(parent: LinearLayout, value: String, size: Float = 15f, bold: Boolean = false): TextView {
-        val view = TextView(this).apply {
-            text = value; textSize = size; setTextColor(ink)
-            if (bold) setTypeface(null, Typeface.BOLD)
-            setPadding(0, dp(4), 0, dp(7))
-        }
-        parent.addView(view); return view
-    }
-    private fun button(parent: LinearLayout, label: String, primary: Boolean = false, action: () -> Unit) {
-        parent.addView(Button(this).apply {
-            text = label; isAllCaps = false; textSize = 15f
-            setTextColor(if (primary) Color.WHITE else teal)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(if (primary) teal else Color.rgb(231, 244, 247))
-            minHeight = dp(48)
-            setOnClickListener { action() }
-        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) })
-    }
-    private fun explain(title: String, message: String, action: (() -> Unit)? = null) {
-        val dialog = AlertDialog.Builder(this).setTitle(title).setMessage(message)
-        if (action == null) dialog.setPositiveButton("Got it", null)
-        else dialog.setPositiveButton("Open settings") { _, _ -> action() }.setNegativeButton("Cancel", null)
-        dialog.show()
-    }
-    private fun openSettings(intent: Intent) {
-        try { startActivity(intent) }
-        catch (_: RuntimeException) {
-            explain("Open Settings manually", "This phone could not open that settings page. Open Android Settings → Apps → Interlink Scheduler or Termux, as indicated by the button. Phone manufacturers use different menu names.")
-        }
-    }
-    private fun appInfo(pkg: String) = openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
-    private fun batterySettings(pkg: String, name: String) {
-        explain("Battery • $name", "On the next screen, select Battery or App battery usage, then Unrestricted / No restrictions / Allow background activity. If your phone uses a separate Battery optimization list, return here and tap that list button. Select $name there and choose Don't optimize. Do not select the official Interlink app.") { appInfo(pkg) }
-    }
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(242, 246, 248)
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-        window.navigationBarColor = Color.rgb(242, 246, 248)
-        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16),dp(20),dp(16),dp(24)) }
+    private fun notice(message:String)=AlertDialog.Builder(this).setMessage(message).setPositiveButton("OK",null).show()
+    private fun launch(intent:Intent) { try { startActivity(intent) } catch(_:RuntimeException) { notice("This phone does not expose that settings page. Open Settings → Apps and select the named app.") } }
+    override fun onCreate(state:Bundle?) {
+        super.onCreate(state)
+        @Suppress("DEPRECATION")
+        val lightBars=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        window.decorView.systemUiVisibility=lightBars
+        body=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(20),dp(20),dp(20),dp(30)) }
         setContentView(ScrollView(this).apply {
-            setBackgroundColor(Color.rgb(242,246,248))
-            setOnApplyWindowInsetsListener { view, insets ->
-                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
-                    insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+            setBackgroundColor(Color.rgb(241,247,249)); addView(body)
+            setOnApplyWindowInsetsListener { view,insets ->
+                @Suppress("DEPRECATION")
+                view.setPadding(0,insets.systemWindowInsetTop,0,insets.systemWindowInsetBottom)
                 insets
             }
-            addView(content)
         })
+        text("Interlink Scheduler 2.0-rc1",25f)
+        text("Continuous background service",20f)
+        text("Runs daily at 1:26, 5:26, 9:26 AM and PM in this phone’s timezone. Each run checks two separate claim windows. Keep the service notification visible; Node runs only during an execution.")
+        status=text("Loading service status…")
+        button("Start / repair 24-hour scheduling") {
+            if(ready()) { Schedule.enable(this); refreshStatus() }
+        }
+        button("Pause scheduled runs") {
+            AlertDialog.Builder(this).setMessage("Pause future runs? An active Termux execution may finish within its original deadline.")
+                .setPositiveButton("Pause") { _,_ -> Schedule.disable(this); refreshStatus() }.setNegativeButton("Cancel",null).show()
+        }
+        text("Run now",20f)
+        button("Test connection — no claim") { manual("test") }
+        button("Submit one eligible claim now") {
+            AlertDialog.Builder(this).setMessage("Submit one real claim only if the server reports eligibility? This does not replace either scheduled claim window.")
+                .setPositiveButton("Submit eligible claim") { _,_ -> manual("claim") }.setNegativeButton("Cancel",null).show()
+        }
+        text("Test service survival",20f)
+        text("Start scheduling first. Choose a test, swipe this app from Recents, and lock the screen. The service should record its timer event without reopening the app. These timers make no API requests or claims; normal scheduled runs remain enabled.")
+        for(minutes in listOf(2,10)) button("$minutes-minute service timer test — no claim") {
+            if(!Schedule.enabled(this)) notice("Start 24-hour scheduling first.")
+            else safely { RunService.probe(this,minutes*60000L); Toast.makeText(this,"Timer requested. You can close this screen and lock the phone.",Toast.LENGTH_LONG).show() }
+        }
+        button("Send this screen to background") { moveTaskToBack(true) }
+        text("Setup",20f)
+        button("Grant Termux command permission") { commandPermission() }
+        button("Allow scheduler notifications") {
+            if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),102)
+            else launch(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,packageName))
+        }
+        button("Scheduler app / battery settings") { appSettings(packageName) }
+        button("Termux app / battery settings") { appSettings("com.termux") }
+        button("Open battery optimization list") { launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        text("Allow background power use for both Interlink Scheduler and Termux. Exact-alarm access is not used in this version. A continuous CPU wake lock increases battery use. Android/OEM force-stop can still terminate the service; no app can promise recovery from that state.")
+        text("Diagnostics",20f)
+        body.addView(Switch(this).apply {
+            text="Live screen, unlock and power-state logging"
+            isChecked=Diagnostics.liveDebug(this@MainActivity)
+            setOnCheckedChangeListener { _,on -> Schedule.prefs(this@MainActivity).edit().putBoolean("liveDebug",on).apply(); Diagnostics.emit(this@MainActivity,"LIVE_DEBUG_CHANGED",reason=on.toString()) }
+        })
+        button("Record current system state") { Diagnostics.emit(this,"MANUAL_STATE_SNAPSHOT"); refreshStatus() }
+        button("Save diagnostic log to Downloads") { export() }
+        button("Refresh status") { refreshStatus() }
+        evidence=text("Loading diagnostic evidence…")
+        text("Personal companion, not the official Interlink app. Termux files and tokens stay private. A command dispatch is not proof of a claim. Each claim result must be confirmed by the Node report.",14f)
     }
-    override fun onStart() {
-        super.onStart()
-        Diagnostics.debug(this,"APP_FOREGROUND","activity_visible")
+    private fun appSettings(name:String)=launch(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:$name")))
+    private fun commandPermission() {
+        if(checkSelfPermission("com.termux.permission.RUN_COMMAND")==PackageManager.PERMISSION_GRANTED) notice("Termux command permission is already granted.")
+        else requestPermissions(arrayOf("com.termux.permission.RUN_COMMAND"),101)
     }
-    override fun onStop() {
-        Diagnostics.debug(this,"APP_BACKGROUND","activity_not_visible; home_swipe_lock_not_distinguished")
-        super.onStop()
+    private fun ready():Boolean {
+        try { packageManager.getPackageInfo("com.termux",0) }
+        catch(_:PackageManager.NameNotFoundException) { notice("Install Termux first and complete the README-mobile.md setup."); return false }
+        if(checkSelfPermission("com.termux.permission.RUN_COMMAND")!=PackageManager.PERMISSION_GRANTED) { commandPermission(); return false }
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),102); return false
+        }
+        return true
     }
-    override fun onResume() {
-        super.onResume()
-        Schedule.checkOnOpen(this)
-        Schedule.prefs(this).registerOnSharedPreferenceChangeListener(listener)
-        render()
-    }
-    override fun onPause() {
-        Schedule.prefs(this).unregisterOnSharedPreferenceChangeListener(listener)
-        handler.removeCallbacksAndMessages(null)
-        super.onPause()
-    }
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode,permissions,grantResults)
-        render()
-        if (requestCode == 1 && !granted(commandPermission)) {
-            explain("Command permission still needed", "Open Interlink Scheduler's App info → Permissions → Additional permissions, and allow Run commands in Termux environment. If that option is missing, verify that a supported Termux app is installed. Android may stop showing a prompt after repeated denials.") { appInfo(packageName) }
+    private fun safely(action:()->Unit) { try { action() } catch(e:RuntimeException) { Diagnostics.emit(this,"USER_ACTION_FAILED",reason=e.javaClass.simpleName); notice("Could not start: ${e.javaClass.simpleName}. Export diagnostics for details.") } }
+    private fun manual(mode:String) { if(ready()) safely { RunService.manual(this,mode); refreshStatus() } }
+    private fun refreshStatus() {
+        val current=++generation
+        Diagnostics.work {
+            val p=Schedule.prefs(this)
+            val enabled=Schedule.enabled(this)
+            val next=p.getLong("next",0); val heartbeat=p.getLong("serviceHeartbeat",0)
+            val power=getSystemService(PowerManager::class.java)
+            val state="Schedule: ${if(enabled) "enabled" else "paused"}\nService: ${if(RunService.running) "running" else "not running"}; CPU wake lock: ${RunService.wakeHeld}\n"+
+                "Last heartbeat: ${if(heartbeat>0) Schedule.time(heartbeat) else "none"}\nNext: ${if(next>0) Schedule.time(next) else "none"}\n"+
+                "Android battery exemptions: Scheduler=${power.isIgnoringBatteryOptimizations(packageName)}, Termux=${power.isIgnoringBatteryOptimizations("com.termux")}\nBattery saver: ${power.isPowerSaveMode}\n"+
+                p.getString("serviceError","").orEmpty()+"\n"+p.getString("manualResult","").orEmpty()+"\n"+p.getString("probeStatus","").orEmpty()
+            val recent=LogRetention.retain(p.getString("events","").orEmpty()).reversed().joinToString("\n\n")
+            val details=ExecutionPolicy.hours.joinToString("\n") { h -> val at=p.getLong("slot:$h",0); "Hour $h: ${if(at>0) Schedule.time(at) else "not planned"}" }+
+                "\n\n"+Diagnostics.dashboard(this)+"\n\nRecent activity — today and yesterday:\n"+recent
+            runOnUiThread { if(!isDestroyed && current==generation) { status.text=state; evidence.text=details } }
         }
     }
-    private fun startManual(mode: String) {
-        if (!installed() || !granted(commandPermission)) {
-            explain("Allow Termux commands first", "Complete step 1 below. Exact-alarm permission is not needed for a button-triggered test."); return
+    private fun export() {
+        Toast.makeText(this,"Preparing private diagnostic export…",Toast.LENGTH_SHORT).show()
+        exports.execute {
+            try {
+                val report=DiagnosticExport.snapshot(this)
+                if(Build.VERSION.SDK_INT>=29) {
+                    val name=DiagnosticExport.fileName()
+                    DiagnosticExport.saveToDownloads(this,name,report)
+                    runOnUiThread { if(!isDestroyed) notice("Saved Downloads/Interlink Scheduler/$name") }
+                } else runOnUiThread {
+                    pendingExport=report
+                    launchExportPicker()
+                }
+            } catch(e:Exception) { runOnUiThread { if(!isDestroyed) notice("Export failed: ${e.javaClass.simpleName}") } }
         }
-        val p = Schedule.prefs(this)
-        val now = System.currentTimeMillis()
-        val activeUntil = p.getLong("activeUntil",0)
-        if (activeUntil > now) {
-            explain("A run is active", "Wait for the current run to finish before starting another action."); return
-        }
-        if (now - p.getLong("lastButtonRun",0) < 5000) return
-        p.edit().putLong("lastButtonRun",now).putString("manualResult","Starting Termux…").commit()
-        try {
-            startForegroundService(Intent(this,RunService::class.java).putExtra("scheduled",now).putExtra("mode",mode))
-        } catch (_: RuntimeException) { p.edit().putString("manualResult","Android blocked the launch. Check app permissions and battery settings.").commit() }
-        render()
     }
-    private fun render() {
-        if (!::content.isInitialized) return
-        content.removeAllViews()
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
-        header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
-        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.8-rc4",13f)
-        header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
-        text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
-        val p = Schedule.prefs(this)
-        val enabled = p.getBoolean("enabled",false)
-        val canRun = installed() && granted(commandPermission) && Schedule.allowed(this) && batteryExempt(packageName) && batteryExempt("com.termux")
-        val next = p.getLong("next",0)
-        val overview = box(content)
-        text(overview,if (!enabled) "Schedule is paused" else if (!canRun) "Schedule needs attention" else "Schedule is enabled",21f,true)
-        val time = if (enabled && next > 0) Instant.ofEpochMilli(next).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("EEE, d MMM • h:mm a")) else "Not scheduled"
-        text(overview,"Next run: $time",17f,true)
-        text(overview,"Phone timezone: ${ZoneId.systemDefault().id}\nSix runs daily: 1:26 AM, 5:26 AM, 9:26 AM, 1:26 PM, 5:26 PM, 9:26 PM. Check results after minute 35.",14f)
-        text(overview,"An enabled schedule is not proof of a successful claim. See recent activity below.",13f)
-        button(overview,if (enabled) "Repair next scheduled run" else "Enable schedule",true) {
-            if (!canRun) explain("Finish setup first", "Install Termux, allow commands (step 1), allow exact alarms (step 2), and exempt BOTH Interlink Scheduler and Termux from battery optimization (step 3). These are required before enabling automatic execution. Manufacturer restrictions may still apply.")
-            else {
-                p.edit().putBoolean("enabled",true).commit(); Schedule.recover(this)
-                render(); Toast.makeText(this,"Next run scheduled",Toast.LENGTH_SHORT).show()
+    private fun launchExportPicker() {
+        startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("text/plain").putExtra(Intent.EXTRA_TITLE,DiagnosticExport.fileName()),103)
+    }
+    @Deprecated("Platform activity callback")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==103) {
+            val report=pendingExport; pendingExport=null
+            val uri=data?.data
+            if(resultCode==RESULT_OK && report!=null && uri!=null) exports.execute {
+                try { DiagnosticExport.write(this,uri,report); runOnUiThread { if(!isDestroyed) notice("Diagnostic log saved.") } }
+                catch(e:Exception) { runOnUiThread { if(!isDestroyed) notice("Export failed: ${e.javaClass.simpleName}") } }
             }
         }
-        if (enabled) button(overview,"Pause future runs") {
-            AlertDialog.Builder(this).setTitle("Pause the schedule?").setMessage("Future runs will stop. An execution already in progress may finish.")
-                .setPositiveButton("Pause") { _, _ ->
-                    Schedule.disable(this); render()
-                }.setNegativeButton("Keep enabled",null).show()
-        }
-        val continuous=box(content)
-        text(continuous,"Continuous scheduling mode",18f,true)
-        val wanted=PersistentMonitorService.desired(this)
-        text(continuous,"Requested: $wanted • Service running now: ${PersistentMonitorService.active}",15f,true)
-        text(continuous,"Keeps a foreground notification and the CPU awake between runs. This can use significant battery. Android alarms stay registered; whichever trigger arrives first starts the existing claim workflow once. This mode cannot run after a true force-stop or guarantee survival if the phone kills the service.",13f)
-        if(!wanted) button(continuous,"Start continuous scheduling",true) {
-            if(!canRun || !enabled) explain("Enable schedule first","Complete setup and enable the six daily runs before starting continuous scheduling.")
-            else AlertDialog.Builder(this).setTitle("Keep CPU awake between runs?")
-                .setMessage("This keeps a visible foreground service and partial wake lock active until you stop it. Battery use will increase. Start continuous scheduling?")
-                .setPositiveButton("Start") { _, _ ->
-                    p.edit().putBoolean("continuousMonitor",true).commit()
-                    PersistentMonitorService.start(this,"user_enabled")
-                    render()
-                }.setNegativeButton("Cancel",null).show()
-        }
-        else button(continuous,"Test continuous timer • in 2 minutes") {
-            if(!PersistentMonitorService.active) explain("Service is not running","Start continuous scheduling before testing its timer.")
-            else {
-                PersistentMonitorService.scheduleProbe(this)
-                explain("Timer test scheduled","Lock the phone and leave it untouched for 3 minutes. The continuous service should post a test notification. No claim will be submitted. Save the diagnostic log after the test.")
-            }
-        }
-        if(wanted) button(continuous,"Background app, keep scheduling") {
-            Diagnostics.emit(this,"APP_BACKGROUND_REQUESTED",reason="move_task_to_back")
-            moveTaskToBack(true)
-        }
-        if(wanted) button(continuous,"Stop continuous scheduling") {
-            PersistentMonitorService.stop(this)
-            render()
-        }
-        button(continuous,if(p.getBoolean("wakeLockCycling",false)) "Disable experimental wake-lock cycling" else "Enable experimental wake-lock cycling") {
-            val enable=!p.getBoolean("wakeLockCycling",false)
-            AlertDialog.Builder(this).setTitle(if(enable) "Enable cycling experiment?" else "Disable cycling experiment?")
-                .setMessage("Releases and immediately reacquires Scheduler's wake locks every 2 minutes. This still uses battery. Whether it affects vivo's force-stop policy is unknown. Original claim deadlines remain enforced.")
-                .setPositiveButton(if(enable) "Enable experiment" else "Disable") { _, _ ->
-                    p.edit().putBoolean("wakeLockCycling",enable).commit()
-                    Diagnostics.emit(this,"WAKE_LOCK_CYCLING_CONFIGURED",reason=if(enable) "enabled_120s_experiment" else "disabled_baseline")
-                    PersistentMonitorService.refresh(this)
-                    render()
-                }.setNegativeButton("Cancel",null).show()
-        }
-        if(wanted) button(continuous,"Test service survival • in 10 minutes") {
-            if(!PersistentMonitorService.active) explain("Service is not running","Start continuous scheduling first.")
-            else {
-                PersistentMonitorService.scheduleProbe(this,600000)
-                explain("Ten-minute survival test","Repeat the same swipe and screen-lock actions as your previous test, then leave the phone untouched for 12 minutes. No claim is submitted by this probe. Save the diagnostic log afterward. A new probe replaces any pending continuous timer test.")
-            }
-        }
-        text(continuous,"The notification also has Stop monitoring. After reboot or app update, Android may reject automatic restart; open Scheduler to check the running status. The normal alarms remain scheduled.",13f)
-        val monitoring=box(content)
-        text(monitoring,"Execution evidence • validation candidate",18f,true)
-        text(monitoring,"Not production-validated on long-idle or overnight physical-device runs. Unknown means no sufficient evidence, not a failed server claim.",13f)
-        val state=Diagnostics.device(this)
-        text(monitoring,"Battery Saver: ${state.optBoolean("batterySaver")} • Charging: ${state.opt("charging")}\nIdle: ${state.optBoolean("idle")} • Standby bucket: ${state.optInt("standbyBucket")}\nNetwork available: ${state.optBoolean("networkAvailable")} • Validated: ${state.optBoolean("networkValidated")}\nTermux installed: ${installed()} • Command permission: ${granted(commandPermission)}",14f)
-        text(monitoring,p.getString("diagnosticError","").orEmpty(),14f,true)
-        text(monitoring,Diagnostics.dashboard(this),14f)
-        button(monitoring,"Save diagnostic log to Downloads",true) { exportReport() }
-        text(monitoring,"Saves recent activity, device state, window results and structured events as one text log file. No tokens or Termux files are included. Saved copies stay in Downloads until you delete them.",13f)
-        button(monitoring,"Copy structured execution report") {
-            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Execution evidence",Diagnostics.report(this)))
-            Toast.makeText(this,"Structured report copied",Toast.LENGTH_SHORT).show()
-        }
-        val debugCard = box(content)
-        text(debugCard,"Live testing diagnostics",18f,true)
-        val debugSwitch = Switch(this).apply {
-            text = "Live debug logging"
-            isChecked = Diagnostics.liveDebug(this@MainActivity)
-            setOnCheckedChangeListener { _, enabled ->
-                Schedule.prefs(this@MainActivity).edit().putBoolean("liveDebug",enabled).commit()
-                Diagnostics.emit(this@MainActivity,if(enabled) "DEBUG_LOGGING_ENABLED" else "DEBUG_LOGGING_DISABLED")
-                if(enabled) Diagnostics.debug(this@MainActivity,"APP_FOREGROUND","logging_enabled_while_activity_visible")
-            }
-        }
-        debugCard.addView(debugSwitch)
-        text(debugCard,"Enable before a live test. Records app visibility, observed screen on/off, unlock and power changes with device state. Core alarm and execution evidence stays on even when this switch is off. No continuous polling or wake lock.",13f)
-        text(debugCard,"Android can stop this process: events during that gap cannot be recorded. Background does not identify whether you pressed Home, swiped Recents, locked the phone or opened another screen. Screen off does not prove Doze. Event timestamps show when this app observed the change.",13f)
-        button(debugCard,"Record system state now") {
-            Diagnostics.emit(this,"MANUAL_STATE_SNAPSHOT",reason="user_requested")
-            Toast.makeText(this,"System state recorded in diagnostic log",Toast.LENGTH_SHORT).show()
-        }
-        text(debugCard,"Save the report using the Downloads button above. Retention: today and yesterday, up to 4,000 structured events. Exported files remain until deleted.",13f)
-        val manual = box(content)
-        text(manual,"Try it now",18f,true)
-        text(manual,"Run immediately, even with the schedule paused. Complete the Termux setup first. Testing now does not prove alarms will run with the screen locked.")
-        text(manual,p.getString("manualResult","No on-demand action yet.").orEmpty(),15f,true)
-        button(manual,"Test connection now • no claim",true) { startManual("test") }
-        text(manual,"Background alarm test: ${p.getString("probeStatus","Not run yet")}",14f)
-        button(manual,"Test alarm-clock delivery • in 10 minutes",true) {
-            if (!canRun) explain("Complete setup first","This connection test needs the same Termux and alarm access as the standard test.")
-            else if (!getSystemService(NotificationManager::class.java).areNotificationsEnabled()) explain("Enable notifications first","Enable Scheduler notifications so the alarm-clock test can show its delivery result.")
-            else {
-                BackgroundTest.schedule(this,10L*60*1000,true)
-                render()
-                explain("Alarm-clock test scheduled","Lock the phone and leave it untouched for 12 minutes. This uses Android's alarm-clock mechanism, may show an upcoming-alarm indicator, and posts a notification on delivery. It submits no claim. Afterward save the diagnostic log to Downloads.")
-            }
-        }
-        text(manual,"Comparison test only: the six daily runs still use the existing standard alarm mechanism. A new test replaces any pending background test. The alarm-clock notification may sound according to your notification settings.",13f)
-        button(manual,"Test background alarm • in 2 minutes") {
-            if (!canRun) explain("Complete setup first", "This test requires Termux command access, exact-alarm capability and both battery exemptions.")
-            else { BackgroundTest.schedule(this); render() }
-        }
-        button(manual,"Long-idle connection test • in 4 hours") {
-            if (!canRun) explain("Complete setup first","The background test needs the same permissions as automatic execution.")
-            else { BackgroundTest.schedule(this,4L*60*60*1000); render() }
-        }
-        button(manual,"Overnight connection test • in 8 hours") {
-            if (!canRun) explain("Complete setup first","The background test needs the same permissions as automatic execution.")
-            else { BackgroundTest.schedule(this,8L*60*60*1000); render() }
-        }
-        text(manual,"Long tests submit no claims. Only one background test can be pending; a new test replaces it. Keep the phone untouched until after the intended time. These do not substitute for real scheduled-window validation.",13f)
-        button(manual,"Cancel background alarm test") { BackgroundTest.cancel(this); render() }
-        text(manual,"No claim is submitted. After scheduling the test, press Home and lock the screen. Check activity after 3 minutes. Repeat separately after swiping this app from Recents. Do not force-stop. A late or busy test is reported separately.",13f)
-        button(manual,"Claim once now") {
-            AlertDialog.Builder(this).setTitle("Submit one eligible claim?")
-                .setMessage("This is a real claim, not a test. It checks server eligibility and submits at most once. It may affect eligibility for the next scheduled window. An uncertain submission will not be retried. Continue?")
-                .setPositiveButton("Check and claim once") { _, _ -> startManual("claim") }
-                .setNegativeButton("Cancel",null).show()
-        }
-        text(manual,"Manual actions share the scheduled bot's lock. Near a scheduled run, let it finish first. Details: logs/on-demand-YYYY-MM-DD.log in Termux.",13f)
-        val commands = box(content)
-        text(commands,"1. Allow Termux commands",18f,true)
-        text(commands,if (!installed()) "Termux is not installed or not visible." else if (granted(commandPermission)) "Allowed ✓" else "Permission needed",16f,true)
-        text(commands,"This permission belongs to Interlink Scheduler. It lets this companion start your bot in Termux. Your Termux properties file must also contain allow-external-apps=true.")
-        button(commands,if (granted(commandPermission)) "View Scheduler permissions" else "Allow Termux commands") {
-            if (!installed()) explain("Install Termux first", "Install a supported Termux build and open it once, then return here.")
-            else if (granted(commandPermission) || p.getBoolean("askedCommands",false)) {
-                explain("Interlink Scheduler permissions", "Select Permissions → Additional permissions → Run commands in Termux environment. If it is already allowed, nothing needs changing.") { appInfo(packageName) }
-            } else { p.edit().putBoolean("askedCommands",true).apply(); requestPermissions(arrayOf(commandPermission),1) }
-        }
-        val alarms = box(content)
-        text(alarms,"2. Allow scheduled alarms",18f,true)
-        text(alarms,if (Schedule.allowed(this)) "Exact-alarm capability available ✓" else "Permission needed",16f,true)
-        text(alarms,"Android reports whether exact alarms are currently permitted. Battery exemption can also provide this capability, so this status does not prove the Settings toggle is enabled. The button opens Android Settings; it is not a permission switch. Select Interlink Scheduler, not Termux.")
-        button(alarms,"Open Scheduler alarm settings") {
-            if (Build.VERSION.SDK_INT >= 31) openSettings(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:$packageName")))
-            else explain("No alarm permission needed", "This Android version does not have the Alarms & reminders permission screen. Alarm access is already available.")
-        }
-        val battery = box(content)
-        text(battery,"3. Allow both apps in background",18f,true)
-        text(battery,"Choose Interlink Scheduler AND Termux. You do not need to change the official Interlink app's battery setting.")
-        text(battery,"Interlink Scheduler: ${if (batteryExempt(packageName)) "battery optimization exemption detected ✓" else "optimization exemption not detected"}",15f,true)
-        button(battery,"Battery • Interlink Scheduler") { batterySettings(packageName,"Interlink Scheduler") }
-        text(battery,"Termux: ${if (!installed()) "not installed" else if (batteryExempt("com.termux")) "battery optimization exemption detected ✓" else "optimization exemption not detected"}",15f,true)
-        button(battery,"Battery • Termux") { batterySettings("com.termux","Termux") }
-        button(battery,"Open battery optimization list") {
-            explain("Choose both apps", "If shown, select All apps. Find Interlink Scheduler and choose Don't optimize. Repeat for Termux. Names vary by phone.") { openSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-        }
-        text(battery,"Some phones also require Auto-start or Allow background activity. These manufacturer settings cannot be verified here. Do not force-stop either app.",13f)
-        val notifications = box(content)
-        text(notifications,"4. Show run notifications",18f,true)
-        text(notifications,if (getSystemService(NotificationManager::class.java).areNotificationsEnabled()) "Notifications enabled ✓" else "Notifications disabled",16f,true)
-        text(notifications,"Allow notifications for Interlink Scheduler. A notification appears while a scheduled run is active.")
-        button(notifications,"Open Scheduler notifications") {
-            openSettings(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,packageName))
-        }
-        val events = box(content)
-        text(events,"Recent activity",18f,true)
-        text(events,"Today and yesterday • up to 100 saved entries",13f)
-        val lines = p.getString("events","").orEmpty().lines().filter { it.isNotBlank() }.takeLast(20).reversed()
-        if (lines.isEmpty()) text(events,"No executions recorded yet. Wait for the next run shown above.")
-        for (line in lines) {
-            val rawTime = line.substringBefore(' ')
-            val local = try { Instant.parse(rawTime).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("d MMM, h:mm:ss a")) } catch (_: Exception) { rawTime }
-            val raw = line.substringAfter(' ',"")
-            val description = when {
-                raw.startsWith("DISABLED") -> "Schedule paused. These older entries do not describe the current status."
-                raw.startsWith("TERMUX_DISPATCHED") -> "Command sent to Termux. Claim results are not yet confirmed."
-                raw.startsWith("TERMUX_COMPLETED exit=0;") -> "Older command completed successfully; its mode was not recorded. See the corresponding bot log."
-                raw.startsWith("TERMUX_COMPLETED") -> "Termux command finished with an issue. Check the bot log."
-                raw.startsWith("TERMUX_DISPATCH_FAILED") -> "Could not start Termux. Check command permission and background settings."
-                raw.startsWith("EXECUTION_DEADLINE") -> "Execution deadline reached. Service stopped; check the bot log."
-                raw.startsWith("MISSED_SCHEDULE") -> "A scheduled run was missed. It will not be replayed."
-                raw.startsWith("BACKGROUND_START_REJECTED") -> "Android blocked background execution. Review both apps' battery settings."
-                else -> raw
-            }
-            text(events,local,13f,true); text(events,description,14f)
-        }
-        button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
-        button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.8-rc4\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
-                ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
-                "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
-                "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +
-                "Background test: ${p.getString("probeStatus","Not run yet")}\nActivity (UTC timestamps):\n" + p.getString("events","") + "\n\n" + Diagnostics.report(this)
-            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Scheduler diagnostics",details))
-            Toast.makeText(this,"Diagnostic history copied; no tokens included",Toast.LENGTH_SHORT).show()
-        }
-        text(content,"Personal companion, not the official Interlink app. This screen reports Android scheduling and command delivery; claim outcomes are stored in the bot's private logs.",13f)
     }
+    override fun onResume() { super.onResume(); Schedule.checkOnOpen(this); Diagnostics.debug(this,"APP_FOREGROUND"); handler.post(refresh) }
+    override fun onPause() { handler.removeCallbacks(refresh); Diagnostics.debug(this,"APP_BACKGROUND"); super.onPause() }
+    override fun onDestroy() { handler.removeCallbacks(refresh); exports.shutdown(); super.onDestroy() }
 }

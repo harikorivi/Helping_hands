@@ -1,10 +1,31 @@
 # Android architecture and validation
 
+**2026-11-07 senior architecture decision review:** [Android reliability and execution boundary](docs/ADR-ANDROID-RELIABILITY-REVIEW.md). It qualifies the off-phone recommendation and identifies application-owned startup risks. No off-phone migration has been selected.
+
 **Latest review:** [1.7-rc1 reliability audit](docs/RELIABILITY-AUDIT.md), [changes](docs/RELIABILITY-CHANGELOG.md), and [validation gate](docs/RELIABILITY-VALIDATION.md) supersede the initial review below where they differ. Physical long-idle reliability remains unverified.
 
 For first-time installation, follow [README-mobile.md](README-mobile.md).
 
-## Architecture review
+## Current architecture: 2.0-rc1
+
+The user accepts a continuous background process. [ADR: service-only scheduling](docs/ADR-SERVICE-ONLY.md) is the current decision and supersedes the alarm-based design below. One visible `specialUse` foreground service owns six durable local-time slots, one continuous CPU wake lock, manual actions and correlated Termux callbacks. Node runs only for bounded executions. Exact alarms and the separate monitor service are removed. This increases battery use and does not override a real Android/OEM force-stop.
+
+| Criterion | Old cron | Current foreground-service companion |
+|---|---|---|
+| Battery | Daemon small; reliable CPU timing generally required a resident wake lock | Resident service and wake lock intentionally cost battery; no continuous Node/network polling |
+| Background timing | Shell process must survive; not Android-native wake scheduling | In-process clock while service/CPU remain active; OEM stop still possible |
+| UI closed | Depends on Termux background survival | UI unnecessary; normal Recents removal retains service |
+| Force-stop | Cannot guarantee execution | Cannot guarantee execution |
+| Reboot | Termux:Boot starts cron | Boot receiver requests the enabled service after normal unlock |
+| Complexity | Small shell setup, limited Android evidence | One Android service plus existing Termux bridge, structured independent outcomes |
+| Maintenance | Cron and shell | Android service/lifecycle validation plus existing Node workflow |
+
+[Install](README-mobile.md) · [Executed checks and remaining limits](android-companion/releases/VALIDATION-2.0-rc1.md).
+
+## Historical initial architecture review
+
+The remainder describes earlier releases, not the 2.0 installation or active scheduling mechanism.
+
 
 Reviewed local commit `966f6c0`, verified against GitHub HEAD on 2026-11-05. The old flow was Termux:Boot → crond → shell → `index.js --once`. It already enabled TLS verification, had two windows, and used application `statusCode` to check acceptance. Problems found:
 

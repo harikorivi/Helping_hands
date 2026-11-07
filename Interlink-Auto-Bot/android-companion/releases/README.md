@@ -1,4 +1,18 @@
-# Interlink Scheduler 1.8-rc4 — optional wake-lock cycling experiment
+# Interlink Scheduler 2.0-rc1 — one continuous foreground service
+
+[Download Interlink-Scheduler-2.0-rc1.apk](Interlink-Scheduler-2.0-rc1.apk). Version code 16, same package/signing identity. Install over the existing app; do not uninstall. The user now accepts continuous background execution and its battery cost. This is a validation candidate, not a claim of vivo force-stop immunity.
+
+Open Scheduler and tap **Start / repair 24-hour scheduling**. Confirm service running, CPU wake lock true and the persistent **Interlink Scheduler service** notification. Node still runs only for the six bounded sessions and manual requests. Stored authentication is retained; no re-login is needed if refresh works. Source from 1.8-rc2 or later supports wrapper protocol 2; see the single [installation guide](../../README-mobile.md) for new installs or existing-user updates.
+
+One service replaces AlarmManager, the separate monitor and experimental cycling modes. It owns all six local-time slots, manual actions and correlated callbacks. Delayed/stale callbacks cannot stop the continuous scheduler. Foreground promotion precedes asynchronous diagnostics. Original deadlines, duplicate barriers and two independent verified results remain. Use the 2-minute or 10-minute **service timer test** to inspect survival; the probe itself launches no Termux command or claim. Exports remain available in Downloads.
+
+All local checks passed, including actual emulator Recents removal and screen-off timing. Physical overnight/OEM survival and real Termux/API acceptance remain pending. [Architecture](../../docs/ADR-SERVICE-ONLY.md) · [Executed validation](VALIDATION-2.0-rc1.md).
+
+SHA-256: `c6aaa9d9c2e405d429cf747c3c2c7ec220c717554eca6846f0da153c69ca219f`.
+
+---
+
+## Archived 1.8-rc4 — optional wake-lock cycling experiment
 
 [Download Interlink-Scheduler-1.8-rc4.apk](Interlink-Scheduler-1.8-rc4.apk). Version code 15, same package and signing identity. Install over the current app. No Node source update is needed if already on the 1.8-rc2 source.
 
