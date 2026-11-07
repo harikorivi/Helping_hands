@@ -179,7 +179,7 @@ class MainActivity : Activity() {
         header.addView(ImageView(this).apply { setImageResource(R.drawable.ic_launcher); contentDescription = "Interlink Scheduler clock icon" }, LinearLayout.LayoutParams(dp(52),dp(52)).apply { rightMargin = dp(12) })
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text(titles,"Interlink Scheduler",23f,true)
-        text(titles,"Your Termux automation companion • v1.8-rc3",13f)
+        text(titles,"Your Termux automation companion • v1.8-rc4",13f)
         header.addView(titles, LinearLayout.LayoutParams(0,-2,1f)); content.addView(header)
         text(content,"Tap once to open a setting. Return here after changing it; status updates automatically.",14f)
         val p = Schedule.prefs(this)
@@ -234,6 +234,24 @@ class MainActivity : Activity() {
         if(wanted) button(continuous,"Stop continuous scheduling") {
             PersistentMonitorService.stop(this)
             render()
+        }
+        button(continuous,if(p.getBoolean("wakeLockCycling",false)) "Disable experimental wake-lock cycling" else "Enable experimental wake-lock cycling") {
+            val enable=!p.getBoolean("wakeLockCycling",false)
+            AlertDialog.Builder(this).setTitle(if(enable) "Enable cycling experiment?" else "Disable cycling experiment?")
+                .setMessage("Releases and immediately reacquires Scheduler's wake locks every 2 minutes. This still uses battery. Whether it affects vivo's force-stop policy is unknown. Original claim deadlines remain enforced.")
+                .setPositiveButton(if(enable) "Enable experiment" else "Disable") { _, _ ->
+                    p.edit().putBoolean("wakeLockCycling",enable).commit()
+                    Diagnostics.emit(this,"WAKE_LOCK_CYCLING_CONFIGURED",reason=if(enable) "enabled_120s_experiment" else "disabled_baseline")
+                    PersistentMonitorService.refresh(this)
+                    render()
+                }.setNegativeButton("Cancel",null).show()
+        }
+        if(wanted) button(continuous,"Test service survival • in 10 minutes") {
+            if(!PersistentMonitorService.active) explain("Service is not running","Start continuous scheduling first.")
+            else {
+                PersistentMonitorService.scheduleProbe(this,600000)
+                explain("Ten-minute survival test","Repeat the same swipe and screen-lock actions as your previous test, then leave the phone untouched for 12 minutes. No claim is submitted by this probe. Save the diagnostic log afterward. A new probe replaces any pending continuous timer test.")
+            }
         }
         text(continuous,"The notification also has Stop monitoring. After reboot or app update, Android may reject automatic restart; open Scheduler to check the running status. The normal alarms remain scheduled.",13f)
         val monitoring=box(content)
@@ -366,7 +384,7 @@ class MainActivity : Activity() {
         }
         button(events,"Refresh status") { Schedule.checkOnOpen(this); render() }
         button(events,"Copy diagnostic history") {
-            val details = "Interlink Scheduler 1.8-rc3\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
+            val details = "Interlink Scheduler 1.8-rc4\nEnabled: ${p.getBoolean("enabled",false)}\nExact-alarm capability (may come from battery exemption): ${Schedule.allowed(this)}\nBattery exemptions: Scheduler=${batteryExempt(packageName)}, Termux=${batteryExempt("com.termux")}\n" +
                 ExecutionPolicy.hours.joinToString("\n") { hour -> val at = p.getLong("alarm:$hour",0); "Hour $hour: ${if (at > 0) Schedule.time(at) else "not registered"}" } +
                 "\nDevice: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; SDK ${Build.VERSION.SDK_INT}\n" +
                 "Power: idle=${getSystemService(PowerManager::class.java).isDeviceIdleMode}; saver=${getSystemService(PowerManager::class.java).isPowerSaveMode}\n" +

@@ -22,6 +22,37 @@ class SchedulingIntegrationTest {
         assertTrue("Grant SCHEDULE_EXACT_ALARM app-op in the emulator first",Schedule.allowed(c))
     }
     @After fun cleanup() { Schedule.disable(c); Schedule.prefs(c).edit().clear().commit() }
+    @Test fun wakeLockCycleUsesRealIntervalAndKeepsScreenOffTimerAlive() {
+        Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testWakeCycle") == "true")
+        val start=System.currentTimeMillis()
+        fun observed(name:String)=Diagnostics.report(c).lines().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+            .filter { it.optString("event")==name && it.optLong("actualAt")>=start }
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun shell(command:String)=automation.executeShellCommand(command).use { fd -> java.io.FileInputStream(fd.fileDescriptor).bufferedReader().readText() }
+        Schedule.recover(c,"fixture")
+        Schedule.prefs(c).edit().putBoolean("continuousMonitor",true).putBoolean("wakeLockCycling",true).commit()
+        PersistentMonitorService.start(c,"real_interval_cycle_test")
+        try {
+            val ready=SystemClock.elapsedRealtime()+5000
+            while(observed("MONITOR_TIMER_PLANNED").isEmpty() && SystemClock.elapsedRealtime()<ready) Thread.sleep(50)
+            assertTrue(PersistentMonitorService.active)
+            PersistentMonitorService.scheduleProbe(c,125000)
+            shell("input keyevent 223")
+            val end=SystemClock.elapsedRealtime()+140000
+            while(observed("MONITOR_TEST_TIMER_FIRED").isEmpty() && SystemClock.elapsedRealtime()<end) Thread.sleep(200)
+            val cycle=observed("WAKE_LOCK_CYCLED").lastOrNull()
+            assertNotNull("No real 120-second cycle observed",cycle)
+            assertTrue(cycle!!.getJSONObject("details").getLong("heldForMs")>=120000)
+            val fired=observed("MONITOR_TEST_TIMER_FIRED").lastOrNull()
+            assertNotNull("Probe failed after wake lock cycling",fired)
+            assertFalse(fired!!.getJSONObject("device").getBoolean("interactive"))
+            assertFalse(Schedule.prefs(c).contains("activeId"))
+        } finally {
+            PersistentMonitorService.stop(c)
+            shell("input keyevent 224")
+            shell("wm dismiss-keyguard")
+        }
+    }
     @Test fun continuousMonitorSurvivesRecentsSwipeAndScreenOffTimer() {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("testRecents") == "true")
         val started=System.currentTimeMillis()

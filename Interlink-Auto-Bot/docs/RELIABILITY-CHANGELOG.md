@@ -1,3 +1,11 @@
+# Wake-lock cycling experiment 1.8-rc4
+
+- Adds optional, default-off 120-second wake-lock release/reacquisition for Scheduler's persistent and bounded execution services, with structured configuration/cycle/failure events and configuration in device snapshots.
+- Reacquisition cannot extend the original wall/elapsed execution deadline. Cycle failure stops the service and records unknown execution outcome without retrying claims.
+- Adds a ten-minute no-claim continuous survival probe to cover the previously observed later process termination. Tests release/reacquisition mechanics, not an undocumented OEM-counter reset.
+- Available OEM settings are accepted as already enabled per the user; no repeated setup request. iManager UI activation is not a prerequisite for the system component recorded in exit descriptions.
+- Does not disable system packages or add unrelated special-access services. No assertion of a fixed four-minute limit, kernel restriction, or guaranteed force-stop immunity.
+
 # Backgrounding and public exit metadata candidate 1.8-rc3
 
 - Uses moveTaskToBack(true) for Background app, keep scheduling. It preserves the UI task instead of removing it.

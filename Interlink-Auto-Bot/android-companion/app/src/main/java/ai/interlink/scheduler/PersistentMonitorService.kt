@@ -48,6 +48,29 @@ class PersistentMonitorService : Service() {
     private var nextAt=0L
     private var timer:Runnable?=null
     private var probeTimer:Runnable?=null
+    private var lastWakeCycle=0L
+    private val cycleTimer=object:Runnable {
+        override fun run() {
+            if(!desired(this@PersistentMonitorService) || !Schedule.prefs(this@PersistentMonitorService).getBoolean("wakeLockCycling",false)) return
+            try {
+                val heldFor=SystemClock.elapsedRealtime()-lastWakeCycle
+                val currentWake=wake ?: throw IllegalStateException("Wake lock unavailable")
+                if(currentWake.isHeld) currentWake.release()
+                currentWake.acquire()
+                lastWakeCycle=SystemClock.elapsedRealtime()
+                Diagnostics.emit(this@PersistentMonitorService,"WAKE_LOCK_CYCLED",reason="experimental_monitor_cycle",details=org.json.JSONObject().put("heldForMs",heldFor))
+                handler.postDelayed(this,WakeLockCyclePolicy.INTERVAL_MS)
+            } catch(error:RuntimeException) {
+                Diagnostics.emit(this@PersistentMonitorService,"WAKE_LOCK_CYCLE_FAILED",reason=error.javaClass.simpleName)
+                stopSelf()
+            }
+        }
+    }
+    private fun planCycle() {
+        handler.removeCallbacks(cycleTimer)
+        if(Schedule.prefs(this).getBoolean("wakeLockCycling",false))
+            handler.postDelayed(cycleTimer,(WakeLockCyclePolicy.INTERVAL_MS-(SystemClock.elapsedRealtime()-lastWakeCycle)).coerceAtLeast(1L))
+    }
     private val clockReceiver=object:BroadcastReceiver() {
         override fun onReceive(c:Context,i:Intent) { Diagnostics.emit(c,"MONITOR_CLOCK_CHANGED",reason=i.action ?: "unknown"); plan() }
     }
@@ -72,12 +95,14 @@ class PersistentMonitorService : Service() {
                 .setContentIntent(open).addAction(android.R.drawable.ic_delete,"Stop monitoring",stop).setOngoing(true).build())
             if(wake?.isHeld!=true) {
                 wake=getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Interlink:continuous-schedule").also { it.acquire() }
+                lastWakeCycle=SystemClock.elapsedRealtime()
                 Diagnostics.emit(this,"MONITOR_WAKE_LOCK_ACQUIRED",reason="continuous_user_enabled")
             }
             Diagnostics.emit(this,"MONITOR_STARTED",reason=i?.getStringExtra("reason") ?: if(i==null) "system_sticky_restart" else "timer_or_schedule_refresh")
             if(i == null) Schedule.recover(this,"monitor restart")
             plan()
             planProbe()
+            planCycle()
         } catch(e:RuntimeException) {
             Diagnostics.emit(this,"MONITOR_START_FAILED",reason=e.javaClass.simpleName)
             Schedule.prefs(this).edit().putBoolean("continuousMonitor",false).commit()
@@ -152,6 +177,7 @@ class PersistentMonitorService : Service() {
         super.onTaskRemoved(rootIntent)
     }
     override fun onDestroy() {
+        handler.removeCallbacks(cycleTimer)
         timer?.let(handler::removeCallbacks)
         probeTimer?.let(handler::removeCallbacks)
         try { unregisterReceiver(clockReceiver) } catch(_:RuntimeException) {}

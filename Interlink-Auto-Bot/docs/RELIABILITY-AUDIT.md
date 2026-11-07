@@ -62,3 +62,10 @@ On 2026-11-06 the continuous timer fired at 21:35:50.425 local for 21:35:50.359 
 The 21:26 scheduled run was launched by foreground recovery before continuous mode was enabled. Its Termux callback returned exit 2 with no valid Node report. Exit 2 alone cannot identify whether a wrapper failed or Node completed with fewer than two confirmed claims. The old private Node log is required for a retrospective cause; 1.8-rc2 supplies safe startup preflight and fallback reports for subsequent attempts.
 
 Explicit stopWithTask=false documents Android's existing default. onTaskRemoved adds evidence and retains the timer; START_STICKY continues to request OS restart. Neither can override a true force-stop or every OEM termination policy. See the release validation artifact for actual task-removal tests and limits.
+
+
+## Confirmed requester and remaining unknown policy
+
+The 1.8-rc3 public exit-description export records `[FORCE STOP] stop ai.interlink.scheduler due to stop by com.vivo.abe` for the Nov 6 22:06:39 and 22:14:10 exits, and Nov 7 01:30:03 and 05:37:58 exits (phone local time). Other records separately show REMOVE TASK. This identifies the requester for those terminations, but does not identify the responsible OEM rule or explain all earlier delivery latency.
+
+The monitor wake-lock holds for two confirmed terminations were about 251 and 306 seconds, so a strict four-minute continuous-hold limit is not established. Cycling in 1.8-rc4 is an optional measured experiment. Its emulator mechanics cannot prove behavior of vivo's proprietary component. The available device settings are treated as enabled per the user.

@@ -178,6 +178,7 @@ class RunService : Service() {
     private var mode = "scheduled"
     private var scheduledAt = 0L
     private var executionId = ""
+    private var lastWakeCycle=0L
     private fun expired() = ExecutionPolicy.expired(System.currentTimeMillis(),SystemClock.elapsedRealtime(),wallDeadline,elapsedDeadline)
     private fun expire() {
         Diagnostics.emit(this,"EXECUTION_FAILED",scheduledAt,executionId,status="unknown",reason="deadline_without_completion",details=JSONObject().put("attemptId",runId))
@@ -188,7 +189,27 @@ class RunService : Service() {
         cleanup()
     }
     private val tick = object : Runnable {
-        override fun run() { if (expired()) { expire(); stopSelf() } else handler.postDelayed(this,1000) }
+        override fun run() {
+            if(expired()) { expire(); stopSelf(); return }
+            val elapsed=SystemClock.elapsedRealtime()
+            if(Schedule.prefs(this@RunService).getBoolean("wakeLockCycling",false) && WakeLockCyclePolicy.due(elapsed,lastWakeCycle)) {
+                val remaining=WakeLockCyclePolicy.remaining(wallDeadline,elapsedDeadline,System.currentTimeMillis(),elapsed)
+                if(remaining<=0) { expire(); stopSelf(); return }
+                try {
+                    val currentLock=lock ?: throw IllegalStateException("Wake lock unavailable")
+                    if(currentLock.isHeld) currentLock.release()
+                    currentLock.acquire(remaining)
+                    Diagnostics.emit(this@RunService,"WAKE_LOCK_CYCLED",scheduledAt,executionId,reason="experimental_execution_cycle",details=JSONObject().put("heldForMs",elapsed-lastWakeCycle).put("remainingMs",remaining))
+                    lastWakeCycle=elapsed
+                } catch(error:RuntimeException) {
+                    Diagnostics.emit(this@RunService,"WAKE_LOCK_CYCLE_FAILED",scheduledAt,executionId,reason=error.javaClass.simpleName)
+                    Diagnostics.emit(this@RunService,"EXECUTION_FAILED",scheduledAt,executionId,status="unknown",reason="wake_lock_cycle_failed")
+                    if(mode=="scheduled") Diagnostics.outcome(this@RunService,scheduledAt,"unknown","wake_lock_cycle_failed; submitted outcome unknown")
+                    stopSelf(); return
+                }
+            }
+            handler.postDelayed(this,1000)
+        }
     }
     override fun onBind(i: Intent?) = null
     override fun onStartCommand(i: Intent?, flags: Int, startId: Int): Int {
@@ -233,6 +254,7 @@ class RunService : Service() {
         val power = getSystemService(PowerManager::class.java)
         Schedule.record(this,"${ExecutionPolicy.label(mode)} starting: intended ${Schedule.time(expected)}; actual ${Schedule.time(actual)}; battery exemptions scheduler=${power.isIgnoringBatteryOptimizations(packageName)}, Termux=${power.isIgnoringBatteryOptimizations("com.termux")}.")
         lock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Interlink:execution").also { it.acquire(remaining) }
+        lastWakeCycle=SystemClock.elapsedRealtime()
         handler.postDelayed(tick,1000)
         val base = "/data/data/com.termux/files"
         val work = "$base/home/Helping_hands/Interlink-Auto-Bot"

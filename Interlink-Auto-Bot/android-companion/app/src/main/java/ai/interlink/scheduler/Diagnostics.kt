@@ -38,7 +38,7 @@ object Diagnostics {
             .put("keyguardLocked",c.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked)
             .put("deviceLocked",c.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked)
             .put("manufacturer",Build.MANUFACTURER).put("model",Build.MODEL)
-            .put("liveDebugEnabled",liveDebug(c))
+            .put("liveDebugEnabled",liveDebug(c)).put("wakeLockCycling",Schedule.prefs(c).getBoolean("wakeLockCycling",false))
             .put("standbyBucket",if(Build.VERSION.SDK_INT>=28) c.getSystemService(UsageStatsManager::class.java).appStandbyBucket else -1)
             .put("exactAlarmCapability",Schedule.allowed(c)).put("batteryExempt",pm.isIgnoringBatteryOptimizations(c.packageName))
             .put("networkAvailable",caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)==true)

@@ -1,4 +1,16 @@
-# Interlink Scheduler 1.8-rc3 — backgrounding and exit descriptions
+# Interlink Scheduler 1.8-rc4 — optional wake-lock cycling experiment
+
+[Download Interlink-Scheduler-1.8-rc4.apk](Interlink-Scheduler-1.8-rc4.apk). Version code 15, same package and signing identity. Install over the current app. No Node source update is needed if already on the 1.8-rc2 source.
+
+**Controlled experiment, not a proven OEM bypass.** Available device settings are accepted as enabled. The system requester com.vivo.abe is recorded in exit descriptions, but a four-minute counter/reset mechanism has not been established.
+
+Stop continuous monitoring if running, enable **experimental wake-lock cycling**, then start continuous scheduling. Tap **Test service survival • in 10 minutes**, repeat the same swipe/lock actions as the previous trial, leave untouched for 12 minutes, then export the diagnostic log. Avoid overlapping a scheduled claim window. The diagnostic probe submits no claims. Logs include mode configuration, each cycle, timer firing and retained exit descriptions.
+
+Cycling is off by default. It applies to Scheduler's monitor and bounded execution locks, preserves original deadlines and does not meaningfully reduce continuous-mode battery consumption. No unrelated special access or system-package disabling is added. [Instructions](../../README-mobile.md) · [Validation](VALIDATION-1.8-rc4.md).
+
+SHA-256: `d449cea5f661a6c3913060bc7d90b9d719deec1c5d6d5a74ec5b87f9a999d502`.
+
+## Previous exit-description candidate 1.8-rc3
 
 [Download Interlink-Scheduler-1.8-rc3.apk](Interlink-Scheduler-1.8-rc3.apk). Version code 14, same package/signing identity. Install over the current app. No Node update is required if already using the 1.8-rc2 source.
 
