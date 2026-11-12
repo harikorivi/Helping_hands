@@ -140,6 +140,9 @@ class RunService:Service() {
     private var lease:ExecutionLease?=null
     private var lastHeartbeat=0L
     private var lastPrune=0L
+    private val serviceId=UUID.randomUUID().toString()
+    private var taskRecoveryRequested=false
+    @Volatile private var stopReason:String?=null
     private val pulseTask=Runnable { pulse() }
     private val clocks=object:BroadcastReceiver() {
         override fun onReceive(c:Context,i:Intent) { engine.post { if(Schedule.enabled(this@RunService)) Schedule.ensurePlan(this@RunService,i.action ?: "clock",true); pulse() } }
@@ -147,15 +150,19 @@ class RunService:Service() {
     override fun onCreate() {
         super.onCreate()
         thread=HandlerThread("InterlinkScheduler").apply { start() }; engine=Handler(thread.looper); instance=this
+        Diagnostics.emit(this,"SERVICE_CREATED",details=JSONObject().put("serviceId",serviceId).put("pidAtEvent",Process.myPid()))
     }
     override fun onBind(i:Intent?)=null
     override fun onStartCommand(i:Intent?,flags:Int,startId:Int):Int {
         val entered=SystemClock.elapsedRealtime()
         // Promote before preferences, SQLite, diagnostic sampling, receiver registration or IPC dispatch.
         try { promote("Starting foreground scheduler") }
-        catch(e:RuntimeException) { Diagnostics.emit(this,"FOREGROUND_PROMOTION_FAILED",reason=e.javaClass.simpleName); stopSelf(); return START_NOT_STICKY }
+        catch(e:RuntimeException) { Diagnostics.emit(this,"FOREGROUND_PROMOTION_FAILED",reason=e.javaClass.simpleName); stopOwned("foreground_promotion_failed"); return START_NOT_STICKY }
         running=true
-        Diagnostics.emit(this,"FOREGROUND_PROMOTED",details=JSONObject().put("onStartEnteredElapsed",entered).put("promotedElapsed",SystemClock.elapsedRealtime()))
+        taskRecoveryRequested=false
+        Diagnostics.emit(this,"FOREGROUND_PROMOTED",reason=i?.getStringExtra("reason") ?: "start_command",
+            details=JSONObject().put("serviceId",serviceId).put("pidAtEvent",Process.myPid()).put("startId",startId).put("startFlags",flags)
+                .put("onStartEnteredElapsed",entered).put("promotedElapsed",SystemClock.elapsedRealtime()))
         engine.post {
             try {
                 Schedule.migrate(this)
@@ -253,7 +260,7 @@ class RunService:Service() {
                 Diagnostics.emit(this,"SERVICE_PROBE_FIRED",probe,"probe-$probe",status=if(now-probe<15000) "delivered" else "late",details=JSONObject().put("delayMs",now-probe))
                 getSystemService(NotificationManager::class.java).notify(905,notification("Service timer test fired; delay ${now-probe}ms",false))
             }
-            if(!Schedule.enabled(this) && lease==null) { stopSelf(); return }
+            if(!Schedule.enabled(this) && lease==null) { stopOwned("schedule_paused_no_active_execution"); return }
             ensureWake(now,elapsed)
             if(lastHeartbeat==0L || elapsed-lastHeartbeat>=60000) {
                 lastHeartbeat=elapsed
@@ -346,10 +353,38 @@ class RunService:Service() {
     private fun failService(e:RuntimeException) {
         Schedule.prefs(this).edit().putString("serviceError","Service stopped: ${e.javaClass.simpleName}").commit()
         Diagnostics.emit(this,"SCHEDULER_SERVICE_FAILED",reason=e.javaClass.simpleName)
+        stopOwned("service_runtime_failure")
+    }
+    private fun stopOwned(reason:String) {
+        stopReason=reason
+        Diagnostics.emit(this,"SERVICE_STOP_REQUESTED",reason=reason,details=JSONObject().put("serviceId",serviceId).put("pidAtEvent",Process.myPid()))
         stopSelf()
     }
-    override fun onTaskRemoved(rootIntent:Intent?) { Diagnostics.emit(this,"SERVICE_TASK_REMOVED",details=JSONObject().put("wakeHeld",wakeHeld)); super.onTaskRemoved(rootIntent) }
+    override fun onTaskRemoved(rootIntent:Intent?) {
+        // Some devices recreate a Service solely to deliver task removal, without onStartCommand.
+        // A healthy started service needs no restart; an enabled cold instance needs a real start.
+        val desired=Schedule.enabled(this)
+        val started=running && instance===this
+        val decision=when {
+            !desired -> "keep_paused"
+            started -> "keep_running"
+            taskRecoveryRequested -> "start_already_requested"
+            else -> "request_foreground_start"
+        }
+        Diagnostics.emit(this,"SERVICE_TASK_REMOVED",reason=decision,details=JSONObject().put("serviceId",serviceId)
+            .put("pidAtEvent",Process.myPid()).put("scheduleEnabledAtCallback",desired)
+            .put("foregroundStartedAtCallback",started).put("wakeHeldAtCallback",wake?.isHeld==true))
+        if(desired && started) engine.post { pulse() }
+        else if(desired && !taskRecoveryRequested) {
+            taskRecoveryRequested=true
+            Diagnostics.emit(this,"RECOVERY_ATTEMPTED",reason="task_removed_without_start",details=JSONObject().put("serviceId",serviceId))
+            request(applicationContext,"task_removed_without_start")
+        }
+        super.onTaskRemoved(rootIntent)
+    }
     override fun onDestroy() {
+        val wasRunning=running && instance===this
+        val held=wake?.isHeld==true
         running=false; instance=null
         engine.removeCallbacksAndMessages(null)
         engine.post {
@@ -357,7 +392,9 @@ class RunService:Service() {
             if(wake?.isHeld==true) wake?.release()
             wake=null; bridge.shutdownNow(); thread.quitSafely()
         }
-        Diagnostics.emit(this,"SCHEDULER_SERVICE_STOPPED",reason="onDestroy_received")
+        Diagnostics.emit(this,"SCHEDULER_SERVICE_STOPPED",reason=stopReason ?: "framework_destroy_no_app_stop_request",
+            details=JSONObject().put("serviceId",serviceId).put("pidAtEvent",Process.myPid())
+                .put("foregroundStartedBeforeDestroy",wasRunning).put("wakeHeldBeforeDestroy",held))
         stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()
     }
 }

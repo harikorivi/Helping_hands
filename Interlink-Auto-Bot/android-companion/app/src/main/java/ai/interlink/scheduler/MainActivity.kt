@@ -45,7 +45,7 @@ class MainActivity:Activity() {
                 insets
             }
         })
-        text("Interlink Scheduler 2.0-rc1",25f)
+        text("Interlink Scheduler 2.0-rc2",25f)
         text("Continuous background service",20f)
         text("Runs daily at 1:26, 5:26, 9:26 AM and PM in this phone’s timezone. Each run checks two separate claim windows. Keep the service notification visible; Node runs only during an execution.")
         status=text("Loading service status…")
@@ -78,6 +78,17 @@ class MainActivity:Activity() {
         }
         button("Scheduler app / battery settings") { appSettings(packageName) }
         button("Termux app / battery settings") { appSettings("com.termux") }
+        button("Request Scheduler battery exemption") {
+            if(getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)) notice("Android battery exemption is already granted to Scheduler.")
+            else {
+                Diagnostics.emit(this,"BATTERY_EXEMPTION_REQUESTED",reason="user_action")
+                try { startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:$packageName"))) }
+                catch(e:RuntimeException) {
+                    Diagnostics.emit(this,"BATTERY_EXEMPTION_REQUEST_FAILED",reason=e.javaClass.simpleName)
+                    launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+            }
+        }
         button("Open battery optimization list") { launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
         text("Allow background power use for both Interlink Scheduler and Termux. Exact-alarm access is not used in this version. A continuous CPU wake lock increases battery use. Android/OEM force-stop can still terminate the service; no app can promise recovery from that state.")
         text("Diagnostics",20f)
@@ -118,6 +129,8 @@ class MainActivity:Activity() {
             val state="Schedule: ${if(enabled) "enabled" else "paused"}\nService: ${if(RunService.running) "running" else "not running"}; CPU wake lock: ${RunService.wakeHeld}\n"+
                 "Last heartbeat: ${if(heartbeat>0) Schedule.time(heartbeat) else "none"}\nNext: ${if(next>0) Schedule.time(next) else "none"}\n"+
                 "Android battery exemptions: Scheduler=${power.isIgnoringBatteryOptimizations(packageName)}, Termux=${power.isIgnoringBatteryOptimizations("com.termux")}\nBattery saver: ${power.isPowerSaveMode}\n"+
+                (if(!power.isIgnoringBatteryOptimizations(packageName)) "Android exemption is missing. Use Request Scheduler battery exemption below.\n" else "")+
+                (if(power.isPowerSaveMode) "Battery Saver is ON. Turn it off for the continuous-service timing test.\n" else "")+
                 p.getString("serviceError","").orEmpty()+"\n"+p.getString("manualResult","").orEmpty()+"\n"+p.getString("probeStatus","").orEmpty()
             val recent=LogRetention.retain(p.getString("events","").orEmpty()).reversed().joinToString("\n\n")
             val details=ExecutionPolicy.hours.joinToString("\n") { h -> val at=p.getLong("slot:$h",0); "Hour $h: ${if(at>0) Schedule.time(at) else "not planned"}" }+

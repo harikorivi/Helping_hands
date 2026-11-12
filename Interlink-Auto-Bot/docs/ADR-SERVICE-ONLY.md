@@ -1,6 +1,8 @@
 # ADR: One continuous foreground scheduling service
 
-Date: 2026-11-07. Status: implemented in 2.0-rc1; physical-device acceptance pending.
+Date: 2026-11-07. Status: implemented in 2.0-rc1, hardened in 2.0-rc2; physical-device acceptance pending.
+
+[12 November evidence and recovery changes](TASK-REMOVAL-REVIEW-2026-11-12.md).
 
 ## Context
 
@@ -65,4 +67,4 @@ A foreground service and partial wake lock are not a privileged permanent proces
 
 ## Verification and release gate
 
-[Release validation](../android-companion/releases/VALIDATION-2.0-rc1.md) records executed tests. Local tests use intercepted Termux dispatches and synthetic report fixtures; they submit no real claims. The physical acceptance gate remains at least 48 hours with 12 due sessions, locked/overnight coverage, accounted-for stage evidence, bounded battery impact, no duplicate/out-of-window POSTs, and two confirmations whenever the server provides two eligible opportunities. This release removes identified application-owned lifecycle conflicts; it does not declare that gate passed.
+[Release validation](../android-companion/releases/VALIDATION-2.0-rc2.md) records executed tests. Local tests use intercepted Termux dispatches and synthetic report fixtures; they submit no real claims. The physical acceptance gate remains at least 48 hours with 12 due sessions, locked/overnight coverage, accounted-for stage evidence, bounded battery impact, no duplicate/out-of-window POSTs, and two confirmations whenever the server provides two eligible opportunities. This release removes identified application-owned lifecycle conflicts; it does not declare that gate passed.

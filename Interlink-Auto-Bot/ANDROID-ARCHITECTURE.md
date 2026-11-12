@@ -6,7 +6,9 @@
 
 For first-time installation, follow [README-mobile.md](README-mobile.md).
 
-## Current architecture: 2.0-rc1
+## Current architecture: 2.0-rc2
+
+[12 November evidence review](docs/TASK-REMOVAL-REVIEW-2026-11-12.md): callback-only service recovery and direct native battery-exemption request are added in rc2. `START_STICKY` and `stopWithTask=false` were already present in rc1.
 
 The user accepts a continuous background process. [ADR: service-only scheduling](docs/ADR-SERVICE-ONLY.md) is the current decision and supersedes the alarm-based design below. One visible `specialUse` foreground service owns six durable local-time slots, one continuous CPU wake lock, manual actions and correlated Termux callbacks. Node runs only for bounded executions. Exact alarms and the separate monitor service are removed. This increases battery use and does not override a real Android/OEM force-stop.
 
@@ -20,7 +22,7 @@ The user accepts a continuous background process. [ADR: service-only scheduling]
 | Complexity | Small shell setup, limited Android evidence | One Android service plus existing Termux bridge, structured independent outcomes |
 | Maintenance | Cron and shell | Android service/lifecycle validation plus existing Node workflow |
 
-[Install](README-mobile.md) · [Executed checks and remaining limits](android-companion/releases/VALIDATION-2.0-rc1.md).
+[Install](README-mobile.md) · [Executed checks and remaining limits](android-companion/releases/VALIDATION-2.0-rc2.md).
 
 ## Historical initial architecture review
 

@@ -1,4 +1,18 @@
-# Interlink Scheduler 2.0-rc1 — one continuous foreground service
+# Interlink Scheduler 2.0-rc2 — guarded task-removal recovery
+
+[Download Interlink-Scheduler-2.0-rc2.apk](Interlink-Scheduler-2.0-rc2.apk). Version code 17, same package/signing identity. Install over the existing app without uninstalling. Node source from 1.8-rc2 or newer already has the required protocol; no new login is required when stored refresh credentials work.
+
+This update handles the observed callback-only service initialization: if scheduling is enabled but the service has not been foreground-started, task removal requests one foreground start. A healthy service stays running; paused scheduling remains paused. `START_STICKY` and `stopWithTask=false` were already present in rc1. This is a best-effort recovery improvement, not force-stop immunity.
+
+After updating, tap **Request Scheduler battery exemption**, approve Android's native dialog, and return to verify **Scheduler=true**. Keep Battery Saver off during the survival trial. Termux's background/battery access is separate. Tap **Start / repair 24-hour scheduling**, then use the **10-minute service timer test — no claim** and export diagnostics after the trial. Keeping the task in Recents is an operational comparison; the code does not assume that its padlock prevents every OEM kill.
+
+Logs now identify service instances, PID-at-event, callback-time foreground/wake/enabled state and explicit app-owned stop reasons. An unexplained framework teardown is labeled without inventing a cause. [What the field evidence proves](../../docs/TASK-REMOVAL-REVIEW-2026-11-12.md) · [Executed validation](VALIDATION-2.0-rc2.md) · [Installation](../../README-mobile.md).
+
+SHA-256: `ade1edbd359b34c628ead888bca396cdbff1211c04ba479f4590218987a6f463`.
+
+---
+
+## Previous 2.0-rc1 — one continuous foreground service
 
 [Download Interlink-Scheduler-2.0-rc1.apk](Interlink-Scheduler-2.0-rc1.apk). Version code 16, same package/signing identity. Install over the existing app; do not uninstall. The user now accepts continuous background execution and its battery cost. This is a validation candidate, not a claim of vivo force-stop immunity.
 

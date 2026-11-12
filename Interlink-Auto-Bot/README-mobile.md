@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 2.0-rc1 (continuous-service candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [service architecture decision](docs/ADR-SERVICE-ONLY.md) and [release validation](android-companion/releases/VALIDATION-2.0-rc1.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 2.0-rc2 (continuous-service candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [service architecture decision](docs/ADR-SERVICE-ONLY.md) and [release validation](android-companion/releases/VALIDATION-2.0-rc2.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-2.0-rc1.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc1.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-2.0-rc2.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc2.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc1.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc2.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -115,8 +115,11 @@ Open **Interlink Scheduler** and use the **Setup** buttons. Tap once, then retur
 |---|---|---|
 | Grant Termux command permission | Interlink Scheduler | Allow **Run commands in Termux environment**. If Android suppresses the prompt, open Scheduler App info → Permissions / Additional permissions. |
 | Allow scheduler notifications | Interlink Scheduler | Allow notifications so the continuously running service is visible. |
+| Request Scheduler battery exemption | Interlink Scheduler | Accept Android’s native exemption dialog, then return and verify **Scheduler=true** in Android battery exemptions. A request alone is not a grant. |
 | Scheduler app / battery settings | Interlink Scheduler | Allow unrestricted background power use / background activity, using the choices offered by the phone. |
 | Termux app / battery settings | Termux | Allow unrestricted background power use / background activity. |
+
+Keep **Battery Saver off** during the continuous-service survival test. Termux needs its own exemption/background settings; the Scheduler dialog cannot grant access on Termux’s behalf. If the phone does not offer the native dialog, use **Open battery optimization list**, select all apps, and configure Scheduler there.
 
 This version does **not** use AlarmManager or require **Alarms & reminders** access. Android battery exemption does not prove that an OEM will preserve the process. The affected vivo/iQOO device has recorded OEM-requested force-stops despite allowed Android settings. This release changes application structure; it does not claim to override those stops. Do not repeatedly change already-enabled permissions as a substitute for inspecting execution evidence.
 
@@ -238,7 +241,10 @@ bash setup-termux.sh
 
 If Git reports local changes or conflicts, stop and preserve those changes before resolving them. Do not use a hard reset or delete the checkout: it may contain your credentials. Earlier manually copied fixes can cause such conflicts.
 
-3. Install **Interlink-Scheduler-2.0-rc1.apk** over the old app using **Update**, with the same signing key. Do not uninstall first. The new single service replaces old alarm/monitor modes and cancels their pending alarms once. Credentials, Node ledger and retained diagnostic history remain. Previous timer probes/cycling settings are retired. An enabled schedule restarts on app update/open, so pause before updating if you do not want scheduled work to resume yet.
+3. Install **Interlink-Scheduler-2.0-rc2.apk** over the old app using **Update**, with the same signing key. Do not uninstall first. If updating from 2.0-rc1, request the native battery exemption once and verify its returned status. This update adds guarded recovery for a callback-only service creation; it does not repeatedly restart a healthy service or override a true force-stop.
+
+   The single service replaces old alarm/monitor modes and cancels their pending alarms once. Credentials, Node ledger and retained diagnostic history remain. Previous timer probes/cycling settings are retired. An enabled schedule restarts on app update/open, so pause before updating if you do not want scheduled work to resume yet.
+
 4. Tap **Test connection — no claim**, then **Start / repair 24-hour scheduling**. Confirm the service/wake-lock status and notification. Only reauthenticate if stored credentials cannot refresh.
 5. Source from 1.8-rc2 or later already provides wrapper protocol 2; no new Node authentication workflow is required. Updating source and APK together is the supported installation path.
 
@@ -290,3 +296,5 @@ See [ANDROID-ARCHITECTURE.md](ANDROID-ARCHITECTURE.md) for the architecture revi
 Tap **Save diagnostic log to Downloads** and wait for the saved confirmation. On Android 10+, open **Files → Downloads → Interlink Scheduler** and share the newest `Interlink-diagnostics-*.txt` file. Android 8/9 opens a file picker. No storage permission is needed. The export contains companion metadata and imported safe Node results, never Termux credential files or raw API responses.
 
 Enable **Live screen, unlock and power-state logging** during testing to record activity foreground/background and observed screen/power broadcasts. Core scheduling/execution events, heartbeat and retained process-exit descriptions are always recorded. Device state is sampled asynchronously: `actualAt` is the event time, `deviceSampledAt` is the later state-sampling time, and `deviceAtImport` is callback-time state for imported Node events. A killed process cannot log the interval when it was absent.
+
+See the [12 November task-removal evidence review](docs/TASK-REMOVAL-REVIEW-2026-11-12.md) for what the export establishes and what remains unknown.

@@ -234,4 +234,63 @@ class SchedulingIntegrationTest {
         assertTrue(RunService.running); assertTrue(RunService.wakeHeld)
         try { callback.send(); fail("One-shot callback must be consumed") } catch(_:PendingIntent.CanceledException) {}
     }
+    private fun boundOnly(callback:(RunService)->Unit) {
+        val bound=CountDownLatch(1)
+        val connection=object:ServiceConnection {
+            override fun onServiceConnected(name:ComponentName,binder:IBinder) { bound.countDown() }
+            override fun onNullBinding(name:ComponentName) { bound.countDown() }
+            override fun onServiceDisconnected(name:ComponentName) {}
+        }
+        assertTrue(c.bindService(Intent(c,RunService::class.java),connection,Context.BIND_AUTO_CREATE))
+        try {
+            assertTrue("Framework must create the bound-only service",bound.await(5,TimeUnit.SECONDS))
+            val field=RunService::class.java.getDeclaredField("instance").apply { isAccessible=true }
+            callback(field.get(null) as RunService)
+        } finally { c.unbindService(connection); instrument.waitForIdleSync() }
+    }
+    @Test fun taskRemovalOnlyCreationStartsEnabledServiceOnce() {
+        val started=System.currentTimeMillis()
+        Schedule.prefs(c).edit().putBoolean("enabled",true).commit()
+        boundOnly { service ->
+            assertFalse(RunService.running)
+            instrument.runOnMainSync { service.onTaskRemoved(null); service.onTaskRemoved(null) }
+            waitUntil { RunService.running && RunService.wakeHeld }
+            val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+                .filter { it.optLong("actualAt")>=started }.toList()
+            assertEquals(1,events.count { it.optString("event")=="RECOVERY_ATTEMPTED" && it.optString("reason")=="task_removed_without_start" })
+            assertTrue(events.any { it.optString("event")=="FOREGROUND_PROMOTED" && it.optString("reason")=="task_removed_without_start" })
+            assertEquals(0,commands.size)
+        }
+        assertTrue("Unbinding must not stop the recovered started service",RunService.running)
+    }
+    @Test fun taskRemovalCannotResurrectPausedBoundOnlyService() {
+        val started=System.currentTimeMillis()
+        boundOnly { service ->
+            instrument.runOnMainSync { service.onTaskRemoved(null) }
+            instrument.waitForIdleSync()
+            assertFalse(RunService.running); assertFalse(RunService.wakeHeld)
+            val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+                .filter { it.optLong("actualAt")>=started }.toList()
+            assertTrue(events.any { it.optString("event")=="SERVICE_TASK_REMOVED" && it.optString("reason")=="keep_paused" })
+            assertFalse(events.any { it.optString("event")=="RECOVERY_ATTEMPTED" })
+            assertEquals(0,commands.size)
+        }
+    }
+    @Test fun healthyTaskRemovalKeepsSameServiceAndDoesNotRestartIt() {
+        start()
+        val started=System.currentTimeMillis()
+        val field=RunService::class.java.getDeclaredField("instance").apply { isAccessible=true }
+        val service=field.get(null) as RunService
+        instrument.runOnMainSync { service.onTaskRemoved(null) }
+        assertSame(service,field.get(null)); assertTrue(RunService.running)
+        val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
+            .filter { it.optLong("actualAt")>=started }.toList()
+        assertTrue(events.any { it.optString("event")=="SERVICE_TASK_REMOVED" && it.optString("reason")=="keep_running" && it.getJSONObject("details").getBoolean("foregroundStartedAtCallback") })
+        assertFalse(events.any { it.optString("event")=="RECOVERY_ATTEMPTED" })
+        assertEquals(0,commands.size)
+    }
+    @Test fun nativeExemptionRequestPermissionIsDeclared() {
+        val info=c.packageManager.getPackageInfo(c.packageName,android.content.pm.PackageManager.GET_PERMISSIONS)
+        assertTrue(info.requestedPermissions!!.contains("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"))
+    }
 }
