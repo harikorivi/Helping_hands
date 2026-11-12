@@ -45,7 +45,7 @@ class MainActivity:Activity() {
                 insets
             }
         })
-        text("Interlink Scheduler 2.0-rc3",25f)
+        text("Interlink Scheduler 2.0-rc4",25f)
         text("Six user-visible alarm clocks",20f)
         text("Runs daily at 1:26, 5:26, 9:26 AM and PM in this phone’s timezone. Each run checks two separate claim windows. Android owns the alarms between runs. A service and wake lock exist only during a bounded execution; Node exits afterward.")
         status=text("Loading service status…")

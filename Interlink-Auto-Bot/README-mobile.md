@@ -1,6 +1,6 @@
 # Interlink Scheduler — first-time Android installation
 
-This guide installs **version 2.0-rc3 (alarm-clock candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [alarm-clock architecture decision](docs/ADR-ALARM-CLOCK-RC3.md) and [release validation](android-companion/releases/VALIDATION-2.0-rc3.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
+This guide installs **version 2.0-rc4 (alarm-clock candidate)** for a new user. **Not production-ready: physical-device four-hour and overnight acceptance is pending.** Read the [alarm-clock architecture decision](docs/ADR-ALARM-CLOCK-RC3.md) and [release validation](android-companion/releases/VALIDATION-2.0-rc4.md). Everything needed is in this repository: the Node.js bot, authentication and eligibility handling, on-demand actions, and the Android companion app. Follow the steps in order; no patch ZIPs or text editor are needed.
 
 The system has two components on your phone:
 
@@ -97,10 +97,10 @@ Do not share or commit `credentials.json`, `token.txt`, `refresh_token.txt`, or 
 
 ## 5. Install the companion APK
 
-On your phone, open [Interlink-Scheduler-2.0-rc3.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc3.apk) and download it. The same file is in the repository at:
+On your phone, open [Interlink-Scheduler-2.0-rc4.apk](https://github.com/harikorivi/Helping_hands/raw/refs/heads/main/Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc4.apk) and download it. The same file is in the repository at:
 
 ```text
-Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc3.apk
+Interlink-Auto-Bot/android-companion/releases/Interlink-Scheduler-2.0-rc4.apk
 ```
 
 Open the downloaded APK using your browser or Files app. If Android asks, allow **Install unknown apps** for the browser/Files app you are using, then select **Install**. You can turn that installation permission off afterward.
@@ -240,7 +240,7 @@ bash setup-termux.sh
 
 If Git reports local changes or conflicts, stop and preserve those changes before resolving them. Do not use a hard reset or delete the checkout: it may contain your credentials. Earlier manually copied fixes can cause such conflicts.
 
-3. Install **Interlink-Scheduler-2.0-rc3.apk** over the existing app with **Update** and the same signing key; do not uninstall. This migrates away from rc1/rc2 continuous scheduling, cancels known legacy alarms and retains credentials, claim ledgers, accepted markers and diagnostic history. Pause and let any active execution finish before upgrading.
+3. Install **Interlink-Scheduler-2.0-rc4.apk** over the existing app with **Update** and the same signing key; do not uninstall. This migrates away from rc1/rc2 continuous scheduling, cancels known legacy alarms and retains credentials, claim ledgers, accepted markers and diagnostic history. Pause and let any active execution finish before upgrading.
 4. Verify native battery exemption and exact-alarm capability, then tap **Enable / repair six alarms**. An enabled schedule is also restored on update/open when allowed. The idle service state is expected; use an alarm-clock probe to test delivery.
 5. Node source from 1.8-rc2 or later already supplies wrapper protocol 2. No new login is required if token refresh works. Updating source and APK together remains the supported installation path.
 

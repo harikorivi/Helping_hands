@@ -198,4 +198,33 @@ class SchedulingIntegrationTest {
         assertEquals("",p.getString("alarmError",null)); assertFalse(Schedule.enabled(c)); assertFalse(RunService.running)
         assertTrue(ExecutionPolicy.hours.none { p.getBoolean("armed:$it",false) })
     }
+    @Test fun appOpenAndRepairTwoSecondsAfterDuePreservePendingGenerationUntilRealReceiver() {
+        Schedule.enable(c)
+        val p=Schedule.prefs(c); val at=System.currentTimeMillis()-2000; val gen="in-flight-original"
+        p.edit().putLong("slot:1",at).putString("generation:1",gen).putBoolean("armed:1",true).commit()
+        assertTrue(Schedule.restore(c,"app_opened")); assertTrue(Schedule.restore(c,"manual_repair"))
+        assertEquals(at,p.getLong("slot:1",0)); assertEquals(gen,p.getString("generation:1",null))
+        assertEquals(0,commands.size); assertFalse(RunService.running)
+        SlotAlarmReceiver().onReceive(c,Intent(c,SlotAlarmReceiver::class.java).setAction(Schedule.ACTION)
+            .putExtra("hour",1).putExtra("scheduled",at).putExtra("generation",gen))
+        val command=commands.poll(5,TimeUnit.SECONDS)!!
+        assertTrue(command.getStringArrayExtra("com.termux.RUN_COMMAND_ARGUMENTS")!!.contains(at.toString()))
+        complete(p.getString("activeId",null)!!,2); waitFor { !RunService.running && !RunService.wakeHeld }
+    }
+    @Test fun unarmedOverdueSlotIsNotReplayedOrPreservedAsAnInFlightAlarm() {
+        Schedule.enable(c)
+        val p=Schedule.prefs(c); val at=System.currentTimeMillis()-2000
+        p.edit().putLong("slot:1",at).putString("generation:1","not-armed").putBoolean("armed:1",false).commit()
+        assertTrue(Schedule.restore(c,"app_opened"))
+        assertTrue(p.getLong("slot:1",0)>System.currentTimeMillis()); assertFalse(RunService.running); assertEquals(0,commands.size)
+    }
+    @Test fun nextRealAlarmRepairsIndependentlyExpiredSlotWithoutReplayingIt() {
+        Schedule.enable(c)
+        val p=Schedule.prefs(c); val old=System.currentTimeMillis()-600000
+        p.edit().putLong("slot:5",old).putBoolean("armed:5",false).commit()
+        fire(System.currentTimeMillis()-100,1); assertNotNull(commands.poll(5,TimeUnit.SECONDS))
+        waitFor { p.getLong("slot:5",0)>System.currentTimeMillis() && p.getBoolean("armed:5",false) }
+        assertEquals(0,commands.size)
+        complete(p.getString("activeId",null)!!,2); waitFor { !RunService.running }
+    }
 }

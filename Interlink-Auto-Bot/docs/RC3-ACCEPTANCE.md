@@ -1,6 +1,6 @@
 # 2.0-rc3 — 48-hour iQOO 7 acceptance checklist
 
-This is the release/physical verification standard, not a statement that the campaign passed.
+This is the release/physical verification standard for rc3 and the rc4 maintenance correction, not a statement that the campaign passed.
 
 ## Preparation
 

@@ -1,6 +1,6 @@
 # Android architecture and validation
 
-**Current decision: 2.0-rc3 uses six user-visible alarm-clock registrations and bounded dataSync executions.** The OS owns waiting between slots; no continuous service or wake lock remains. [Current ADR](docs/ADR-ALARM-CLOCK-RC3.md) · [Installation](README-mobile.md) · [48-hour acceptance](docs/RC3-ACCEPTANCE.md) · [Local validation](android-companion/releases/VALIDATION-2.0-rc3.md).
+**Current decision: 2.0-rc4 uses six user-visible alarm-clock registrations and bounded dataSync executions.** The OS owns waiting between slots; no continuous service or wake lock remains. [Current ADR](docs/ADR-ALARM-CLOCK-RC3.md) · [Installation](README-mobile.md) · [48-hour acceptance](docs/RC3-ACCEPTANCE.md) · [Local validation](android-companion/releases/VALIDATION-2.0-rc4.md).
 
 The remainder is historical design/evidence. Earlier continuous-service and exact-alarm recommendations do not override the rc3 decision.
 

@@ -1,4 +1,18 @@
-# Interlink Scheduler 2.0-rc3 — six alarm clocks, bounded executions
+# Interlink Scheduler 2.0-rc4 — preserve pending alarms during app-open
+
+[Download Interlink-Scheduler-2.0-rc4.apk](Interlink-Scheduler-2.0-rc4.apk). Version code 19; same package/signing identity. Install over rc3 without uninstalling or reauthenticating when existing credentials refresh.
+
+This corrects the observed 21:26 race: app-open/manual repair shortly after the scheduled time must not replace an already-armed original alarm before its receiver arrives. The original generation and deadline are retained, with a deferred-reconciliation event. Expired/unarmed slots are still not replayed; there is no resident service or wake lock between jobs. The next real alarm also repairs independently expired/missing slots.
+
+The physical rc3 cold locked-screen probe passed at 8.78 seconds late, but a subsequent OEM-requested force-stop and manual reopening mean future-alarm survival was not demonstrated. Keep the verified native access and test one labeled Recents condition. Inspect the three overnight sessions after **09:35 on 13 November**, not during the second 09:31–09:34 window.
+
+[Field evidence and limits](../../docs/RC3-FIELD-REVIEW-2026-11-12.md) · [Executed validation](VALIDATION-2.0-rc4.md) · [Installation](../../README-mobile.md) · [48-hour standard](../../docs/RC3-ACCEPTANCE.md).
+
+SHA-256: `a3557bb5d0584b90df345193afb05560440bc9cce872b46ccd6c4aab5ec24829`.
+
+---
+
+## Previous 2.0-rc3 — six alarm clocks, bounded executions
 
 [Download Interlink-Scheduler-2.0-rc3.apk](Interlink-Scheduler-2.0-rc3.apk). Version code 18; same package and signing identity. Install over the existing app without uninstalling. Pause the old schedule and let any active execution finish first. Stored credentials and the Node claim ledger are preserved; no new login is needed when token refresh works.
 

@@ -85,6 +85,15 @@ object Schedule {
         try {
             for(h in ExecutionPolicy.hours) {
                 val old=p.getLong("slot:$h",0)
+                // Opening settings/UI a few seconds after :26 must not invalidate an in-flight alarm.
+                // Preserve its generation; only the real receiver may start that original session.
+                if(!changed && reason in listOf("app_opened","manual_repair","alarm_delivery") &&
+                    ExecutionPolicy.inWindow(old,now) && p.getBoolean("armed:$h",false) &&
+                    !p.getString("generation:$h",null).isNullOrEmpty() && p.getLong("accepted:$h",0)!=old) {
+                    Diagnostics.emit(c,"ALARM_RECONCILIATION_DEFERRED",old,status="awaiting_receiver",reason="preserve_pending_original_window",
+                        details=JSONObject().put("hour",h).put("recoverySource",reason).put("remainingMs",old+480000-now))
+                    continue
+                }
                 val rebuild=changed || old<=now || !p.getBoolean("armed:$h",false) || reason in listOf("reboot","app_update","manual_repair","permission_granted","app_opened")
                 if(!rebuild) continue
                 if(old>0 && old<=now && p.getLong("accepted:$h",0)!=old) {
@@ -198,7 +207,11 @@ class SlotAlarmReceiver:BroadcastReceiver() {
                 Diagnostics.emit(c,"EXECUTION_FAILED",at,execution,status="start_rejected",reason=e.javaClass.simpleName,details=details)
                 if(h!=0) Diagnostics.outcome(c,at,"failed","foreground_start_${e.javaClass.simpleName}")
                 else p.edit().putString("probeStatus","Service start rejected: ${e.javaClass.simpleName}").commit()
-            } finally { if(h!=0) try { Schedule.advance(c,h) } catch(_:RuntimeException) {} }
+            } finally {
+                if(h!=0) try { Schedule.advance(c,h) } catch(_:RuntimeException) {}
+                // Also repair independently missed/expired slots at the next real alarm, without a resident loop.
+                RecoveryWorker.execute { Schedule.restore(c,"alarm_delivery") }
+            }
         }
     }
 }

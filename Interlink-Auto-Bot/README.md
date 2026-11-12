@@ -1,6 +1,6 @@
 # Interlink Auto Bot
 
-A personal Android automation project with a Node.js API client and an **Interlink Scheduler** companion app. Validation candidate **2.0-rc3** includes automatic token refresh, six daily two-window runs and six user-visible Android alarm clocks with bounded foreground execution, an immediate connection test, and a separately confirmed single-claim action.
+A personal Android automation project with a Node.js API client and an **Interlink Scheduler** companion app. Validation candidate **2.0-rc4** includes automatic token refresh, six daily two-window runs and six user-visible Android alarm clocks with bounded foreground execution, an immediate connection test, and a separately confirmed single-claim action.
 
 **Start with [README-mobile.md](README-mobile.md)** for a complete first-time installation. Existing users should follow its upgrade note to preserve credentials. All fixes are integrated into the source; install the matching APK from [android-companion/releases](android-companion/releases).
 
@@ -9,7 +9,7 @@ A personal Android automation project with a Node.js API client and an **Interli
 - Credentials remain private in Termux. Do not commit token, device, proxy-credential or log files.
 - Android execution is subject to Doze and manufacturer restrictions; force-stop recovery is not guaranteed.
 
-The app releases its execution service and wake lock between sessions while preserving the existing Node workflow. Recorded OEM-requested force-stops remain outside ordinary app recovery. Physical overnight acceptance is pending; see the [service architecture decision](docs/ADR-ALARM-CLOCK-RC3.md) and [executed validation](android-companion/releases/VALIDATION-2.0-rc3.md).
+The app releases its execution service and wake lock between sessions while preserving the existing Node workflow. Recorded OEM-requested force-stops remain outside ordinary app recovery. Physical overnight acceptance is pending; see the [service architecture decision](docs/ADR-ALARM-CLOCK-RC3.md) and [executed validation](android-companion/releases/VALIDATION-2.0-rc4.md).
 
 Development checks:
 
