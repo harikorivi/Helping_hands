@@ -21,12 +21,12 @@ object DiagnosticExport {
         val p = Schedule.prefs(c)
         val version = c.packageManager.getPackageInfo(c.packageName, 0).versionName
         return "Interlink Scheduler $version\nExported: ${java.time.Instant.now()}\n" +
-            "Mode: continuous foreground service\nService running: ${RunService.running}; wake lock: ${RunService.wakeHeld}\nHeartbeat: ${p.getLong("serviceHeartbeat",0)}\nEnabled: ${p.getBoolean("enabled", false)}\nLive debug logging: ${Diagnostics.liveDebug(c)}\n" +
-            "Current device state (not historical): ${Diagnostics.device(c)}\n" +
+            "Mode: six user-visible alarm clocks; bounded execution service\nService running: ${RunService.running}; wake lock: ${RunService.wakeHeld}\nEnabled: ${p.getBoolean("enabled", false)}\nLive debug logging: ${Diagnostics.liveDebug(c)}\n" +
+            "48-hour trial evidence: ${Diagnostics.trialEvidence(c)}\nCurrent device state (not historical): ${Diagnostics.device(c)}\n" +
             "Background test: ${p.getString("probeStatus", "Not run yet")}\n\n" +
             ExecutionPolicy.hours.joinToString("\n") { hour ->
                 val at = p.getLong("slot:$hour", 0)
-                "Hour $hour: ${if (at > 0) Schedule.time(at) else "not planned"}"
+                "Hour $hour: ${if (at > 0) Schedule.time(at) else "not planned"}; last registration accepted: ${p.getBoolean("armed:$hour",false)}"
             } + "\n\n${Diagnostics.dashboard(c)}\n\nRecent activity:\n" +
             p.getString("events", "").orEmpty() + "\n\nStructured events:\n" + Diagnostics.report(c)
     }

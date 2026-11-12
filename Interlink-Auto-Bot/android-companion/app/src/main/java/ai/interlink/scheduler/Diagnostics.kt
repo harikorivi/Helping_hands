@@ -36,6 +36,7 @@ object Diagnostics {
         }
         return helper!!.writableDatabase
     }
+    fun trialEvidence(c:Context)=Schedule.prefs(c).getBoolean("trialEvidence",true)
     fun liveDebug(c: Context) = Schedule.prefs(c).getBoolean("liveDebug",false)
     fun debug(c: Context, event: String, reason: String = "") {
         if (liveDebug(c)) emit(c,event,reason=reason)
@@ -52,7 +53,8 @@ object Diagnostics {
             .put("keyguardLocked",c.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked)
             .put("deviceLocked",c.getSystemService(android.app.KeyguardManager::class.java).isDeviceLocked)
             .put("manufacturer",Build.MANUFACTURER).put("model",Build.MODEL)
-            .put("liveDebugEnabled",liveDebug(c)).put("schedulingMode","foreground_service")
+            .put("liveDebugEnabled",liveDebug(c)).put("schedulingMode","alarm_clock_bounded_service")
+            .put("exactAlarmCapability",Schedule.allowed(c)).put("termuxBatteryExempt",pm.isIgnoringBatteryOptimizations("com.termux"))
             .put("serviceRunning",RunService.running).put("wakeHeld",RunService.wakeHeld)
             .put("processStartElapsedMs",Process.getStartElapsedRealtime())
             .put("standbyBucket",if(Build.VERSION.SDK_INT>=28) c.getSystemService(UsageStatsManager::class.java).appStandbyBucket else -1)
@@ -70,6 +72,8 @@ object Diagnostics {
     private fun persist(c:Context,event:String,at:Long,executionId:String,status:String,reason:String,details:JSONObject,actual:Long,source:String,observedElapsed:Long) {
         try {
             val row=JSONObject().put("event",event).put("executionId",executionId).put("scheduledAt",if(at>0) at else JSONObject.NULL)
+                .put("pid",if(source=="node") details.opt("pid") ?: JSONObject.NULL else Process.myPid()).put("observerPid",Process.myPid())
+                .put("attemptId",details.opt("attemptId") ?: JSONObject.NULL).put("serviceId",details.opt("serviceId") ?: JSONObject.NULL)
                 .put("actualAt",actual).put("observedElapsedMs",observedElapsed).put("processStartElapsedMs",Process.getStartElapsedRealtime()).put("recordedAt",System.currentTimeMillis()).put("deviceSampledAt",System.currentTimeMillis()).put("status",status).put("reason",reason).put("source",source).put("details",details)
             // Node cannot observe Android power state: callback-time state is explicitly separate.
             if(source=="android") row.put("device",device(c)) else row.put("device",JSONObject.NULL).put("deviceAtImport",device(c))
@@ -80,7 +84,11 @@ object Diagnostics {
         }
     }
     fun registered(c: Context, at: Long) = work {
-        try { db(c).execSQL("INSERT OR IGNORE INTO runs(executionId,scheduledAt,status) VALUES(?,?,?)",arrayOf(id(at),at,"registered")) }
+        try {
+            db(c).execSQL("INSERT OR IGNORE INTO runs(executionId,scheduledAt,status) VALUES(?,?,?)",arrayOf(id(at),at,"registered"))
+            // Re-enabling the same future slot must not leave its old cancelled summary displayed.
+            db(c).execSQL("UPDATE runs SET status='registered',reason=NULL,result=NULL,deliveredAt=NULL WHERE executionId=? AND status='cancelled'",arrayOf(id(at)))
+        }
         catch(e: RuntimeException) { emit(c,"DIAGNOSTIC_STORAGE_FAILED",at,reason=e.javaClass.simpleName) }
     }
     fun outcome(c: Context, at: Long, status: String, reason: String, result: String="", delivered: Long?=null) = work {
@@ -93,17 +101,17 @@ object Diagnostics {
     }
     fun prune(c: Context) = work {
         try {
-            val cutoff=LocalDate.now().minusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val cutoff=LocalDate.now().minusDays(if(trialEvidence(c)) 2 else 1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             db(c).delete("events","at < ?",arrayOf(cutoff.toString()))
-            db(c).execSQL("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 4000)")
+            db(c).execSQL("DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT ${if(trialEvidence(c)) 6000 else 4000})")
             db(c).delete("runs","scheduledAt < ?",arrayOf((System.currentTimeMillis()-30L*86400000).toString()))
         } catch(e: RuntimeException) { emit(c,"DIAGNOSTIC_STORAGE_FAILED",reason=e.javaClass.simpleName) }
     }
     fun report(c: Context): String = try {
         flush()
         val lines=mutableListOf<String>()
-        db(c).rawQuery("SELECT payload FROM (SELECT id,payload FROM events ORDER BY id DESC LIMIT 4000) ORDER BY id",null).use { while(it.moveToNext()) lines.add(it.getString(0)) }
-        dashboard(c)+"\nEvents JSONL (today/yesterday, max 4000; deviceAtImport is NOT historical Node power state):\n"+lines.joinToString("\n")
+        db(c).rawQuery("SELECT payload FROM (SELECT id,payload FROM events ORDER BY id DESC LIMIT ${if(trialEvidence(c)) 6000 else 4000}) ORDER BY id",null).use { while(it.moveToNext()) lines.add(it.getString(0)) }
+        dashboard(c)+"\nEvents JSONL (${if(trialEvidence(c)) "three local days, max 6000 (48-hour trial)" else "today/yesterday, max 4000"}; deviceAtImport is NOT historical Node power state):\n"+lines.joinToString("\n")
     } catch(e:RuntimeException) { "Diagnostic read failed: ${e.javaClass.simpleName}" }
     @Synchronized fun dashboard(c: Context): String = try {
         val rows=mutableListOf<String>()
@@ -120,7 +128,7 @@ object Diagnostics {
                 last.add("$title: "+if(it.moveToFirst()) "${Schedule.time(it.getLong(0))} ${it.getString(1)}" else "No evidence yet")
             }
         }
-        for(name in listOf("SCHEDULE_PLANNED","SERVICE_TIMER_FIRED","SERVICE_HEARTBEAT","SCHEDULER_SERVICE_STOPPED")) {
+        for(name in listOf("ALARM_SCHEDULED","ALARM_RECEIVED","FOREGROUND_PROMOTED","EXECUTION_RESOURCES_RELEASED")) {
             db(c).rawQuery("SELECT payload FROM events WHERE payload LIKE ? ORDER BY id DESC LIMIT 1",arrayOf("%\"event\":\"$name\"%")).use {
                 if(it.moveToFirst()) { val row=JSONObject(it.getString(0)); last.add("Last $name: ${Schedule.time(row.getLong("actualAt"))} (${row.getString("executionId")})") }
             }
@@ -131,7 +139,7 @@ object Diagnostics {
         if(Build.VERSION.SDK_INT>=30) {
             try {
                 val p=Schedule.prefs(c); val since=p.getLong("exitDetailsAt",0)
-                val exits=c.getSystemService(ActivityManager::class.java).getHistoricalProcessExitReasons(c.packageName,0,8)
+                val exits=c.getSystemService(ActivityManager::class.java).getHistoricalProcessExitReasons(c.packageName,0,32)
                 for(e in exits.filter { it.timestamp>since }) {
                     val description=ExitEvidence.description(e.description)
                     emit(c,"PROCESS_EXIT_OBSERVED",reason="reason_code_${e.reason}",details=JSONObject()
@@ -167,6 +175,7 @@ class DiagnosticApplication : android.app.Application() {
         Diagnostics.work {
             val filter=IntentFilter().apply { addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED); addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED); addAction(Intent.ACTION_POWER_CONNECTED); addAction(Intent.ACTION_POWER_DISCONNECTED); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_USER_PRESENT) }
             if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED) else registerReceiver(receiver,filter)
+            Diagnostics.processHistory(this)
         }
     }
 }

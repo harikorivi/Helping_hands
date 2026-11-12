@@ -1,5 +1,7 @@
 # ADR: One continuous foreground scheduling service
 
+**Historical: superseded by the user-approved [2.0-rc3 alarm-clock decision](ADR-ALARM-CLOCK-RC3.md).**
+
 Date: 2026-11-07. Status: implemented in 2.0-rc1, hardened in 2.0-rc2; physical-device acceptance pending.
 
 [12 November evidence and recovery changes](TASK-REMOVAL-REVIEW-2026-11-12.md).

@@ -11,286 +11,191 @@ import org.junit.Assert.*
 import org.junit.runner.RunWith
 import java.util.concurrent.*
 
-/** All Termux dispatches are intercepted: no authentication, network calls or real claims. */
+/** No credentials or live Termux calls: only the Android boundary is real. */
 @RunWith(AndroidJUnit4::class)
 class SchedulingIntegrationTest {
-    private val instrument=InstrumentationRegistry.getInstrumentation()
-    private val c get()=instrument.targetContext
+    private val inst=InstrumentationRegistry.getInstrumentation()
+    private val c get()=inst.targetContext
     private val commands=LinkedBlockingQueue<Intent>()
-    private fun waitUntil(test:()->Boolean) {
-        val end=SystemClock.elapsedRealtime()+12000
-        while(!test() && SystemClock.elapsedRealtime()<end) SystemClock.sleep(30)
-        assertTrue("Condition not reached",test())
-    }
+    private fun waitFor(check:()->Boolean) { val end=SystemClock.elapsedRealtime()+10000; while(!check() && SystemClock.elapsedRealtime()<end) SystemClock.sleep(30); assertTrue("Condition not reached",check()) }
     @Before fun setup() {
-        c.stopService(Intent(c,RunService::class.java))
-        waitUntil { !RunService.running }
+        c.stopService(Intent(c,RunService::class.java)); waitFor { !RunService.running && !RunService.wakeHeld }
         Schedule.prefs(c).edit().clear().commit()
-        RunService.dispatchOverride={ command -> commands.offer(command); ComponentName("com.termux","FakeCommand") }
+        inst.uiAutomation.executeShellCommand("appops set ${c.packageName} SCHEDULE_EXACT_ALARM allow").use { java.io.FileInputStream(it.fileDescriptor).readBytes() }
+        assertTrue(Schedule.allowed(c))
+        RunService.dispatchOverride={ commands.offer(it); ComponentName("com.termux","Fixture") }
     }
-    @After fun cleanup() {
-        Schedule.prefs(c).edit().putBoolean("enabled",false).commit()
-        c.stopService(Intent(c,RunService::class.java))
-        waitUntil { !RunService.running && !RunService.wakeHeld }
-        RunService.dispatchOverride=null
+    @After fun cleanup() { Schedule.disable(c); c.stopService(Intent(c,RunService::class.java)); waitFor { !RunService.running && !RunService.wakeHeld }; RunService.dispatchOverride=null }
+    private fun fire(at:Long,h:Int=1):Intent {
+        val p=Schedule.prefs(c); val gen=java.util.UUID.randomUUID().toString()
+        p.edit().putBoolean("enabled",true).putInt("alarmPlanVersion",3).putLong("slot:$h",at).putString("generation:$h",gen).commit()
+        return Intent(c,SlotAlarmReceiver::class.java).setAction(Schedule.ACTION).putExtra("hour",h).putExtra("scheduled",at).putExtra("generation",gen).also { SlotAlarmReceiver().onReceive(c,it) }
     }
-    private fun start() {
-        Schedule.enable(c)
-        waitUntil { RunService.running && RunService.wakeHeld && Schedule.prefs(c).getLong("next",0)>0 }
+    private fun complete(id:String,exit:Int=0,stdout:String?=null) {
+        ResultReceiver().onReceive(c,Intent().setData(Uri.parse("interlink-result://run/$id")).putExtra("result",Bundle().apply { putInt("exitCode",exit); putInt("err",-1); if(stdout!=null) putString("stdout",stdout) }))
     }
-    private fun complete(id:String,exit:Int=0) {
-        ResultReceiver().onReceive(c,Intent().setData(Uri.parse("interlink-result://run/$id"))
-            .putExtra("result",Bundle().apply { putInt("exitCode",exit) }))
-    }
-    @Test fun singleSpecialUseServiceAndNoExactAlarmPermission() {
-        val info=c.packageManager.getPackageInfo(c.packageName,android.content.pm.PackageManager.GET_SERVICES or android.content.pm.PackageManager.GET_PERMISSIONS)
+    @Test fun sixAlarmRegistrationsRequireNoResidentServiceOrLock() {
+        assertTrue(Schedule.enable(c))
+        val p=Schedule.prefs(c)
+        assertEquals(6,ExecutionPolicy.hours.count { p.getBoolean("armed:$it",false) })
+        assertEquals(6,ExecutionPolicy.hours.map { p.getLong("slot:$it",0) }.toSet().size)
+        assertNotNull(c.getSystemService(AlarmManager::class.java).nextAlarmClock)
+        assertFalse(RunService.running); assertFalse(RunService.wakeHeld); assertFalse(Handoff.held())
+        val info=c.packageManager.getPackageInfo(c.packageName,android.content.pm.PackageManager.GET_SERVICES)
         assertEquals(1,info.services!!.size)
-        assertEquals("ai.interlink.scheduler.RunService",info.services!!.single().name)
-        if(Build.VERSION.SDK_INT>=34) assertEquals(android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,info.services!!.single().foregroundServiceType)
-        assertFalse(info.services!!.single().flags and android.content.pm.ServiceInfo.FLAG_STOP_WITH_TASK !=0)
-        assertFalse(info.requestedPermissions!!.contains("android.permission.SCHEDULE_EXACT_ALARM"))
-        start()
-        assertEquals(6,ExecutionPolicy.hours.count { Schedule.prefs(c).getLong("slot:$it",0)>0 })
+        if(Build.VERSION.SDK_INT>=29) assertEquals(android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,info.services!!.single().foregroundServiceType)
         assertEquals(0,commands.size)
     }
-    @Test fun foregroundPromotionDoesNotWaitForDiagnosticsWorker() {
+    @Test fun lateWithinWindowKeepsOriginalTimestampAndCompletionReleasesResources() {
+        val at=System.currentTimeMillis()-65000
+        fire(at)
+        val command=commands.poll(5,TimeUnit.SECONDS)!!
+        assertTrue(command.getStringArrayExtra("com.termux.RUN_COMMAND_ARGUMENTS")!!.contains(at.toString()))
+        waitFor { RunService.running && RunService.wakeHeld && !Handoff.held() }
+        val id=Schedule.prefs(c).getString("activeId",null)!!
+        complete(id,2)
+        waitFor { !RunService.running && !RunService.wakeHeld }
+        assertTrue(Schedule.prefs(c).getBoolean("armed:1",false))
+        assertTrue(Diagnostics.report(c).contains("EXECUTION_RESOURCES_RELEASED"))
+    }
+    @Test fun duplicateAndStaleAlarmNeverDispatchAgain() {
+        val original=fire(System.currentTimeMillis()-100)
+        assertNotNull(commands.poll(5,TimeUnit.SECONDS))
+        val p=Schedule.prefs(c); val id=p.getString("activeId",null)!!
+        SlotAlarmReceiver().onReceive(c,original)
+        assertEquals(0,commands.size); assertEquals(id,p.getString("activeId",null))
+        complete(id,2)
+        waitFor { !RunService.running }
+        SlotAlarmReceiver().onReceive(c,original)
+        assertEquals(0,commands.size)
+    }
+    @Test fun expiredSlotRearmsFutureWithoutLaunchingService() {
+        val at=System.currentTimeMillis()-480001
+        fire(at)
+        assertFalse(RunService.running); assertFalse(Handoff.held()); assertEquals(0,commands.size)
+        assertTrue(Schedule.prefs(c).getLong("slot:1",0)>System.currentTimeMillis())
+        assertTrue(Diagnostics.report(c).contains("outside_original_deadline"))
+    }
+    @Test fun pauseCancelsAlarmsButActiveExecutionFinishesWithinOwnDeadline() {
+        fire(System.currentTimeMillis()-100); assertNotNull(commands.poll(5,TimeUnit.SECONDS))
+        val id=Schedule.prefs(c).getString("activeId",null)!!
+        Schedule.disable(c)
+        assertTrue(RunService.running)
+        assertTrue(ExecutionPolicy.hours.none { Schedule.prefs(c).getBoolean("armed:$it",false) })
+        complete(id,2); waitFor { !RunService.running && !RunService.wakeHeld }
+    }
+    @Test fun manualOneShotCallbackStopsBoundedServiceAndStaleCallbackCannotStopNewRun() {
+        RunService.manual(c,"test"); val command=commands.poll(5,TimeUnit.SECONDS)!!
+        val first=Schedule.prefs(c).getString("activeId",null)!!
+        @Suppress("DEPRECATION") val callback=command.getParcelableExtra<PendingIntent>("com.termux.RUN_COMMAND_PENDING_INTENT")!!
+        callback.send(c,0,Intent().putExtra("result",Bundle().apply { putInt("exitCode",0); putInt("err",-1) }))
+        waitFor { !RunService.running && !RunService.wakeHeld }
+        RunService.manual(c,"test"); assertNotNull(commands.poll(5,TimeUnit.SECONDS))
+        val second=Schedule.prefs(c).getString("activeId",null)!!
+        complete(first)
+        assertEquals(second,Schedule.prefs(c).getString("activeId",null)); assertTrue(RunService.running)
+        complete(second); waitFor { !RunService.running }
+    }
+    @Test fun frameworkAlarmDeliversProbeAndStopsWithoutTermux() {
+        val started=System.currentTimeMillis()
+        Schedule.probe(c,1300)
+        waitFor { Schedule.prefs(c).getString("probeStatus","")!!.startsWith("Alarm and foreground service delivered") }
+        waitFor { !RunService.running && !RunService.wakeHeld && !Handoff.held() }
+        assertEquals(0,commands.size)
+        val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }.filter { it.optLong("actualAt")>=started }.toList()
+        assertTrue(events.any { it.optString("event")=="ALARM_RECEIVED" })
+        assertTrue(events.any { it.optString("event")=="FOREGROUND_PROMOTED" && !it.isNull("attemptId") && !it.isNull("serviceId") })
+    }
+    @Test fun originalElapsedDeadlineStopsExecutionAndReleasesLock() {
+        val at=System.currentTimeMillis()-479000
+        fire(at); commands.poll(2,TimeUnit.SECONDS)
+        waitFor { !RunService.running && !RunService.wakeHeld && Schedule.prefs(c).getString("activeId",null)==null }
+        assertTrue(Diagnostics.report(c).contains("original_deadline_without_callback"))
+    }
+    @Test fun cancelledSummaryBecomesRegisteredAgainWithoutErasingConfirmedResults() {
+        val at=System.currentTimeMillis()+600000
+        Diagnostics.registered(c,at); Diagnostics.outcome(c,at,"cancelled","user_paused"); Diagnostics.registered(c,at)
+        assertFalse(Diagnostics.report(c).contains("${Schedule.time(at)}: cancelled user_paused"))
+        Diagnostics.outcome(c,at,"success","fixture_confirmed"); Diagnostics.registered(c,at)
+        assertTrue(Diagnostics.report(c).contains("${Schedule.time(at)}: success fixture_confirmed"))
+    }
+    @Test fun restoringOverduePlanRecordsMissedWithoutAppOpenClaimReplay() {
+        Schedule.enable(c)
+        val at=System.currentTimeMillis()-600000
+        Schedule.prefs(c).edit().putLong("slot:1",at).putBoolean("armed:1",true).commit()
+        assertTrue(Schedule.restore(c,"app_opened"))
+        assertEquals(0,commands.size); assertFalse(RunService.running)
+        assertTrue(Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }.any { it.optString("event")=="ALARM_MISSED" && it.optString("executionId")==Diagnostics.id(at) })
+    }
+    @Test fun bootUpdateAndClockRecoveryOnlyRestoreAlarms() {
+        Schedule.enable(c)
+        for(action in listOf(Intent.ACTION_BOOT_COMPLETED,Intent.ACTION_MY_PACKAGE_REPLACED,Intent.ACTION_TIME_CHANGED,Intent.ACTION_TIMEZONE_CHANGED)) {
+            RecoveryReceiver().onReceive(c,Intent(action))
+        }
+        waitFor { ExecutionPolicy.hours.all { Schedule.prefs(c).getBoolean("armed:$it",false) } }
+        assertFalse(RunService.running); assertEquals(0,commands.size)
+        Schedule.disable(c)
+        assertTrue(ExecutionPolicy.hours.none { Schedule.operation(c,it,flags=PendingIntent.FLAG_NO_CREATE)!=null })
+    }
+    @Test fun tokenReportsRemainCorrelatedAndWindowsRemainIndependent() {
+        val at=System.currentTimeMillis(); val id="fixture"; val execution=Diagnostics.id(at)
+        val p=Schedule.prefs(c)
+        p.edit().putString("runMode:$id","scheduled").putLong("runTime:$id",at).putString("runExecution:$id",execution).putString("runService:$id","fixture-service").commit()
+        val data=org.json.JSONObject().put("version",1).put("executionId",execution).put("attemptId",id).put("scheduledAt",at).put("nodeStarted",true)
+            .put("events",org.json.JSONArray().put(org.json.JSONObject().put("event","NODE_PROCESS_STARTED").put("actualAt",at).put("pid",12345)))
+            .put("windows",org.json.JSONObject().put("1",org.json.JSONObject().put("result","WINDOW_1_SUCCESS").put("reason","accepted_and_last_claim_advanced"))
+                .put("2",org.json.JSONObject().put("result","WINDOW_2_NOT_ELIGIBLE").put("reason","server_not_eligible")))
+        assertNull(ExecutionReport.parse("INTERLINK_RESULT $data",execution,"wrong",at))
+        complete(id,2,"INTERLINK_RESULT $data")
+        val report=Diagnostics.report(c)
+        assertTrue(report.contains("Window 2: NOT_ELIGIBLE")); assertTrue(report.contains("fixture-service"))
+        val node=report.lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }.last { it.optString("event")=="NODE_PROCESS_STARTED" }
+        assertEquals(id,node.getString("attemptId")); assertEquals(12345,node.getInt("pid"))
+    }
+    @Test fun missingReportNeverBecomesTwoSuccessfulClaims() {
+        val at=System.currentTimeMillis(); val p=Schedule.prefs(c)
+        p.edit().putString("runMode:missing","scheduled").putLong("runTime:missing",at).commit()
+        complete("missing",0)
+        assertTrue(Diagnostics.report(c).contains("no valid Node report"))
+    }
+    @Test fun bootIdentityInvalidatesOldElapsedReservationWithoutReplay() {
+        val p=Schedule.prefs(c); val now=System.currentTimeMillis()
+        val boot=android.provider.Settings.Global.getInt(c.contentResolver,android.provider.Settings.Global.BOOT_COUNT,0)
+        p.edit().putString("activeId","old").putString("runMode:old","scheduled").putLong("runTime:old",now-10000)
+            .putLong("activeUntil",now+470000).putLong("activeElapsedUntil",Long.MAX_VALUE).putInt("activeBoot",boot+1).commit()
+        SessionStore.reconcile(c)
+        assertNull(p.getString("activeId",null)); assertEquals(0,commands.size)
+        assertTrue(Diagnostics.report(c).contains("boot_identity_changed"))
+    }
+    @Test fun foregroundPromotionDoesNotWaitForDiagnosticSampling() {
         val entered=CountDownLatch(1); val release=CountDownLatch(1)
         Diagnostics.work { entered.countDown(); release.await(15,TimeUnit.SECONDS) }
         assertTrue(entered.await(5,TimeUnit.SECONDS))
-        try {
-            Schedule.enable(c)
-            waitUntil { RunService.running && RunService.wakeHeld }
-        } finally { release.countDown() }
-        assertTrue(Diagnostics.report(c).contains("FOREGROUND_PROMOTED"))
+        try { RunService.manual(c,"test"); waitFor { RunService.running && RunService.wakeHeld }; assertNotNull(commands.poll(5,TimeUnit.SECONDS)) }
+        finally { release.countDown() }
+        complete(Schedule.prefs(c).getString("activeId",null)!!); waitFor { !RunService.running && !RunService.wakeHeld }
     }
-    @Test fun serviceProbeFiresWithoutTermux() {
-        start()
-        RunService.probe(c,1100)
-        waitUntil { Schedule.prefs(c).getLong("serviceProbeAt",0)>0 }
-        // A separate UI test validates actual launcher removal.
-        c.startForegroundService(Intent(c,RunService::class.java).setAction(RunService.ENSURE))
-        waitUntil { Schedule.prefs(c).getString("probeStatus","")!!.startsWith("Service timer fired") }
-        assertTrue(RunService.running); assertTrue(RunService.wakeHeld)
-        assertEquals(0,commands.size)
+    @Test fun pausedProbeOverdueIsReportedWithoutReplayingService() {
+        val p=Schedule.prefs(c); val at=System.currentTimeMillis()-130000
+        p.edit().putLong("probe",at).putString("generation:0","old").commit()
+        Schedule.restore(c,"app_opened")
+        assertFalse(p.contains("probe")); assertFalse(RunService.running); assertEquals(0,commands.size)
+        assertTrue(p.getString("probeStatus","")!!.contains("not replayed"))
     }
-    @Test fun manualCallbackAndStaleCallbackDoNotStopContinuousService() {
-        start()
-        RunService.manual(c,"test")
-        assertNotNull(commands.poll(5,TimeUnit.SECONDS))
-        val first=Schedule.prefs(c).getString("activeId",null)!!
-        complete(first)
-        waitUntil { Schedule.prefs(c).getString("activeId",null)==null }
-        assertTrue(RunService.running)
-        RunService.manual(c,"test")
-        assertNotNull(commands.poll(5,TimeUnit.SECONDS))
-        val second=Schedule.prefs(c).getString("activeId",null)!!
-        complete(first)
-        assertEquals(second,Schedule.prefs(c).getString("activeId",null))
-        assertTrue(RunService.running)
-        complete(second)
+    @Test fun appOpenRearmsFutureSlotsEvenIfStoredRegistrationFlagsSurvivedOsCancellation() {
+        Schedule.enable(c)
+        val p=Schedule.prefs(c); val at=p.getLong("slot:1",0); val previous=p.getString("generation:1",null)
+        c.getSystemService(AlarmManager::class.java).cancel(Schedule.operation(c,1)!!)
+        assertTrue(p.getBoolean("armed:1",false))
+        assertTrue(Schedule.restore(c,"app_opened"))
+        assertNotEquals(previous,p.getString("generation:1",null)); assertEquals(at,p.getLong("slot:1",0))
+        assertFalse(RunService.running); assertEquals(0,commands.size)
     }
-    @Test fun duplicateManualDoesNotDispatchAndPauseAllowsActiveRunToFinish() {
-        start()
-        RunService.manual(c,"test")
-        assertNotNull(commands.poll(5,TimeUnit.SECONDS))
-        val id=Schedule.prefs(c).getString("activeId",null)!!
-        RunService.manual(c,"test")
-        waitUntil { Schedule.prefs(c).getString("manualResult","")!!.startsWith("Another execution") }
-        assertEquals(0,commands.size)
-        Schedule.disable(c)
-        assertTrue(RunService.running)
-        complete(id)
-        waitUntil { !RunService.running && !RunService.wakeHeld }
-    }
-    @Test fun expiredPersistedRunIsUnknownAndNeverResubmitted() {
-        val now=System.currentTimeMillis(); val p=Schedule.prefs(c)
-        p.edit().putString("activeId","old").putLong("runTime:old",now-600000)
-            .putString("runMode:old","scheduled").putLong("activeUntil",now-1)
-            .putLong("activeElapsedUntil",SystemClock.elapsedRealtime()-1).commit()
-        start()
-        waitUntil { p.getString("activeId",null)==null }
-        assertEquals(0,commands.size)
-        assertTrue(Diagnostics.report(c).contains("deadline_without_callback"))
-    }
-    @Test fun dueSlotUsesOriginalTimestampAndCannotDispatchTwice() {
-        start()
-        val p=Schedule.prefs(c); val at=System.currentTimeMillis()-2000
-        p.edit().putLong("slot:1",at).commit()
-        RunService.request(c,"test_due_slot")
-        val command=commands.poll(5,TimeUnit.SECONDS)!!
-        val args=command.getStringArrayExtra("com.termux.RUN_COMMAND_ARGUMENTS")!!
-        assertTrue(args.contains(at.toString()))
-        val id=p.getString("activeId",null)!!
-        assertEquals(at,p.getLong("accepted:1",0))
-        p.edit().putLong("slot:1",at).commit()
-        RunService.request(c,"duplicate_slot")
-        complete(id,2)
-        waitUntil { p.getLong("slot:1",0)!=at }
-        assertEquals(0,commands.size)
-        assertTrue(RunService.running)
-    }
-    @Test fun overdueSlotIsRecordedAndNotReplayed() {
-        start()
-        val at=System.currentTimeMillis()-600000
-        Schedule.prefs(c).edit().putLong("slot:1",at).commit()
-        RunService.request(c,"test_overdue")
-        waitUntil { Schedule.prefs(c).getLong("slot:1",0)!=at }
-        assertEquals(0,commands.size)
-        assertTrue(Diagnostics.report(c).contains("original_deadline_passed"))
-    }
-    @Test fun rebootRecoveryDoesNotResumePriorMonotonicLease() {
-        val now=System.currentTimeMillis(); val p=Schedule.prefs(c)
-        p.edit().putBoolean("enabled",true).putString("activeId","oldboot")
-            .putString("runMode:oldboot","scheduled").putLong("runTime:oldboot",now-10000)
-            .putLong("activeUntil",now+470000).putLong("activeElapsedUntil",Long.MAX_VALUE).commit()
-        RecoveryReceiver().onReceive(c,Intent(Intent.ACTION_BOOT_COMPLETED))
-        waitUntil { RunService.running && p.getString("activeId",null)==null }
-        assertEquals(0,commands.size)
-        assertTrue(Diagnostics.report(c).contains("reboot_during_prior_execution"))
-    }
-    @Test fun reportContractRejectsUncorrelatedAndPreservesIndependentWindowReasons() {
-        val stdout="INTERLINK_RESULT " + org.json.JSONObject().put("version",1).put("executionId","schedule-123").put("attemptId","attempt")
-            .put("scheduledAt",123).put("nodeStarted",true).put("events",org.json.JSONArray())
-            .put("windows",org.json.JSONObject().put("1",org.json.JSONObject().put("result","WINDOW_1_SUCCESS").put("reason","accepted_and_last_claim_advanced"))
-                .put("2",org.json.JSONObject().put("result","WINDOW_2_NOT_ELIGIBLE").put("reason","server_not_eligible"))).toString()
-        val parsed=ExecutionReport.parse(stdout,"schedule-123","attempt",123)!!
-        assertEquals(1,parsed.successful); assertTrue(parsed.complete)
-        assertTrue(parsed.summary.contains("Window 2: NOT_ELIGIBLE"))
-        assertNull(ExecutionReport.parse(stdout,"schedule-123","wrong",123))
-        assertNull(ExecutionReport.parse("raw sensitive output","schedule-123","attempt",123))
-    }
-    @Test fun missingNodeReportNeverBecomesTwoSuccessfulClaims() {
-        val p=Schedule.prefs(c); val at=System.currentTimeMillis()
-        p.edit().putString("runMode:fixture","scheduled").putLong("runTime:fixture",at).commit()
-        ResultReceiver().onReceive(c,Intent(c,ResultReceiver::class.java).setData(Uri.parse("interlink-result://run/fixture"))
-            .putExtra("result",Bundle().apply { putInt("exitCode",0) }))
-        assertTrue(Diagnostics.report(c).contains("Command exit=0; no valid Node report"))
-    }
-    @Test fun migrationCancelsOnlyLegacyInterlinkPendingIntents() {
-        fun operation(code:Int,receiver:String,action:String,flags:Int)=PendingIntent.getBroadcast(c,code,
-            Intent().setClassName(c.packageName,"${c.packageName}.$receiver").setAction(action),flags or PendingIntent.FLAG_IMMUTABLE)
-        val legacy=operation(101,"AlarmReceiver","ai.interlink.scheduler.RUN",PendingIntent.FLAG_UPDATE_CURRENT)
-        val unrelated=operation(777,"ResultReceiver","unrelated-test",PendingIntent.FLAG_UPDATE_CURRENT)
+    @Test fun regrantClearsPermissionWarningWithoutResurrectingPausedSchedule() {
         val p=Schedule.prefs(c)
-        p.edit().putString("credentialSentinel","keep-private-state").putLong("alarm:1",123).commit()
-        Schedule.migrate(c)
-        assertNull(operation(101,"AlarmReceiver","ai.interlink.scheduler.RUN",PendingIntent.FLAG_NO_CREATE))
-        assertNotNull(operation(777,"ResultReceiver","unrelated-test",PendingIntent.FLAG_NO_CREATE))
-        assertEquals("keep-private-state",p.getString("credentialSentinel",null))
-        assertFalse(p.contains("alarm:1"))
-        assertEquals(123L,p.getLong("slot:1",0))
-        unrelated.cancel(); legacy.cancel()
-    }
-    @Test fun timezoneReplanPreservesOriginalActiveExecutionDeadline() {
-        start()
-        RunService.manual(c,"test"); assertNotNull(commands.poll(5,TimeUnit.SECONDS))
-        val p=Schedule.prefs(c); val id=p.getString("activeId",null)!!
-        val original=p.getLong("activeUntil",0)
-        RecoveryReceiver().onReceive(c,Intent(Intent.ACTION_TIMEZONE_CHANGED))
-        waitUntil { Diagnostics.report(c).contains("timezone_change") }
-        assertEquals(original,p.getLong("activeUntil",0))
-        assertEquals(id,p.getString("activeId",null))
-        assertEquals(0,commands.size)
-        complete(id)
-    }
-    @Test fun bootIdentityGuardsLeaseWhenBootBroadcastWasNotObserved() {
-        val now=System.currentTimeMillis(); val p=Schedule.prefs(c)
-        val current=android.provider.Settings.Global.getInt(c.contentResolver,android.provider.Settings.Global.BOOT_COUNT,0)
-        p.edit().putString("activeId","pastboot").putString("runMode:pastboot","scheduled")
-            .putLong("runTime:pastboot",now-10000).putLong("activeUntil",now+470000)
-            .putLong("activeElapsedUntil",Long.MAX_VALUE).putInt("activeBoot",current+1).commit()
-        start()
-        waitUntil { p.getString("activeId",null)==null }
-        assertEquals(0,commands.size)
-        assertTrue(Diagnostics.report(c).contains("boot_identity_changed"))
-    }
-    @Test fun termuxInternalFailureCannotBecomeSuccessfulManualTest() {
-        start()
-        RunService.manual(c,"test"); assertNotNull(commands.poll(5,TimeUnit.SECONDS))
-        val id=Schedule.prefs(c).getString("activeId",null)!!
-        ResultReceiver().onReceive(c,Intent().setData(Uri.parse("interlink-result://run/$id"))
-            .putExtra("result",Bundle().apply { putInt("exitCode",0); putInt("err",0) }))
-        assertTrue(Schedule.prefs(c).getString("manualResult","")!!.contains("internal error"))
-        assertFalse(Schedule.prefs(c).getString("manualResult","")!!.contains("passed"))
-        assertTrue(RunService.running)
-    }
-    @Test fun migratedAlreadyDeliveredSlotCannotDispatchAgain() {
-        val p=Schedule.prefs(c); val at=System.currentTimeMillis()-2000
-        p.edit().putLong("alarm:1",at).putLong("delivered:1",at).commit()
-        start()
-        waitUntil { p.getLong("slot:1",0)!=at }
-        assertEquals(at,p.getLong("accepted:1",0))
-        assertEquals(0,commands.size)
-    }
-    @Test fun actualPendingIntentCallbackCompletesOnlyItsLeaseAndKeepsService() {
-        start()
-        RunService.manual(c,"test")
-        val command=commands.poll(5,TimeUnit.SECONDS)!!
-        @Suppress("DEPRECATION")
-        val callback=command.getParcelableExtra<PendingIntent>("com.termux.RUN_COMMAND_PENDING_INTENT")!!
-        callback.send(c,0,Intent().putExtra("result",Bundle().apply { putInt("exitCode",0); putInt("err",-1) }))
-        waitUntil { Schedule.prefs(c).getString("manualResult","")!!.startsWith("Connection test passed") }
-        assertNull(Schedule.prefs(c).getString("activeId",null))
-        assertTrue(RunService.running); assertTrue(RunService.wakeHeld)
-        try { callback.send(); fail("One-shot callback must be consumed") } catch(_:PendingIntent.CanceledException) {}
-    }
-    private fun boundOnly(callback:(RunService)->Unit) {
-        val bound=CountDownLatch(1)
-        val connection=object:ServiceConnection {
-            override fun onServiceConnected(name:ComponentName,binder:IBinder) { bound.countDown() }
-            override fun onNullBinding(name:ComponentName) { bound.countDown() }
-            override fun onServiceDisconnected(name:ComponentName) {}
-        }
-        assertTrue(c.bindService(Intent(c,RunService::class.java),connection,Context.BIND_AUTO_CREATE))
-        try {
-            assertTrue("Framework must create the bound-only service",bound.await(5,TimeUnit.SECONDS))
-            val field=RunService::class.java.getDeclaredField("instance").apply { isAccessible=true }
-            callback(field.get(null) as RunService)
-        } finally { c.unbindService(connection); instrument.waitForIdleSync() }
-    }
-    @Test fun taskRemovalOnlyCreationStartsEnabledServiceOnce() {
-        val started=System.currentTimeMillis()
-        Schedule.prefs(c).edit().putBoolean("enabled",true).commit()
-        boundOnly { service ->
-            assertFalse(RunService.running)
-            instrument.runOnMainSync { service.onTaskRemoved(null); service.onTaskRemoved(null) }
-            waitUntil { RunService.running && RunService.wakeHeld }
-            val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
-                .filter { it.optLong("actualAt")>=started }.toList()
-            assertEquals(1,events.count { it.optString("event")=="RECOVERY_ATTEMPTED" && it.optString("reason")=="task_removed_without_start" })
-            assertTrue(events.any { it.optString("event")=="FOREGROUND_PROMOTED" && it.optString("reason")=="task_removed_without_start" })
-            assertEquals(0,commands.size)
-        }
-        assertTrue("Unbinding must not stop the recovered started service",RunService.running)
-    }
-    @Test fun taskRemovalCannotResurrectPausedBoundOnlyService() {
-        val started=System.currentTimeMillis()
-        boundOnly { service ->
-            instrument.runOnMainSync { service.onTaskRemoved(null) }
-            instrument.waitForIdleSync()
-            assertFalse(RunService.running); assertFalse(RunService.wakeHeld)
-            val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
-                .filter { it.optLong("actualAt")>=started }.toList()
-            assertTrue(events.any { it.optString("event")=="SERVICE_TASK_REMOVED" && it.optString("reason")=="keep_paused" })
-            assertFalse(events.any { it.optString("event")=="RECOVERY_ATTEMPTED" })
-            assertEquals(0,commands.size)
-        }
-    }
-    @Test fun healthyTaskRemovalKeepsSameServiceAndDoesNotRestartIt() {
-        start()
-        val started=System.currentTimeMillis()
-        val field=RunService::class.java.getDeclaredField("instance").apply { isAccessible=true }
-        val service=field.get(null) as RunService
-        instrument.runOnMainSync { service.onTaskRemoved(null) }
-        assertSame(service,field.get(null)); assertTrue(RunService.running)
-        val events=Diagnostics.report(c).lineSequence().filter { it.startsWith("{") }.map { org.json.JSONObject(it) }
-            .filter { it.optLong("actualAt")>=started }.toList()
-        assertTrue(events.any { it.optString("event")=="SERVICE_TASK_REMOVED" && it.optString("reason")=="keep_running" && it.getJSONObject("details").getBoolean("foregroundStartedAtCallback") })
-        assertFalse(events.any { it.optString("event")=="RECOVERY_ATTEMPTED" })
-        assertEquals(0,commands.size)
-    }
-    @Test fun nativeExemptionRequestPermissionIsDeclared() {
-        val info=c.packageManager.getPackageInfo(c.packageName,android.content.pm.PackageManager.GET_PERMISSIONS)
-        assertTrue(info.requestedPermissions!!.contains("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"))
+        p.edit().putBoolean("enabled",false).putString("alarmError","Exact-alarm capability missing. Open alarm access and repair.").commit()
+        assertTrue(Schedule.allowed(c)); assertFalse(Schedule.restore(c,"permission_granted"))
+        assertEquals("",p.getString("alarmError",null)); assertFalse(Schedule.enabled(c)); assertFalse(RunService.running)
+        assertTrue(ExecutionPolicy.hours.none { p.getBoolean("armed:$it",false) })
     }
 }

@@ -1,17 +1,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
-    <queries><package android:name="com.termux" /></queries>
+    <queries>
+        <package android:name="com.termux" /><package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" /><package android:name="com.vivo.abe" />
+    </queries>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application android:name=".DiagnosticApplication" android:label="Interlink Scheduler" android:icon="@drawable/ic_launcher" android:roundIcon="@drawable/ic_launcher" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
+        <receiver android:name=".SlotAlarmReceiver" android:exported="false" />
         <receiver android:name=".ResultReceiver" android:exported="false" />
         <receiver android:name=".RecoveryReceiver" android:exported="false">
             <intent-filter>
@@ -19,10 +24,10 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
-        <service android:name=".RunService" android:stopWithTask="false" android:exported="false" android:foregroundServiceType="specialUse">
-            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User enabled continuous scheduling with visible notification and CPU wake lock for six fixed local scheduled Termux sessions" />
+        <service android:name=".RunService" android:stopWithTask="false" android:exported="false" android:foregroundServiceType="dataSync">
         </service>
     </application>
 </manifest>

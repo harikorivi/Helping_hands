@@ -59,4 +59,20 @@ class DiagnosticExportTest {
             }
         } finally { c.contentResolver.delete(uri, null, null) }
     }
+    @Test fun trialRetentionPreservesThirdCalendarDateAndOrdinaryModePrunesIt() {
+        val c=InstrumentationRegistry.getInstrumentation().targetContext
+        val p=Schedule.prefs(c); val previous=Diagnostics.trialEvidence(c)
+        Diagnostics.report(c) // Flush writers and initialize the schema before inserting a dated fixture.
+        val db=c.openOrCreateDatabase("execution-diagnostics.db",0,null)
+        val marker="trial-retention-"+java.util.UUID.randomUUID()
+        val at=java.time.LocalDate.now().minusDays(2).atTime(12,0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val payload=org.json.JSONObject().put("event",marker).put("actualAt",at).toString()
+        try {
+            db.insertOrThrow("events",null,android.content.ContentValues().apply { put("at",at); put("payload",payload) })
+            p.edit().putBoolean("trialEvidence",true).commit(); Diagnostics.prune(c)
+            assertTrue(Diagnostics.report(c).contains(marker))
+            p.edit().putBoolean("trialEvidence",false).commit(); Diagnostics.prune(c)
+            assertFalse(Diagnostics.report(c).contains(marker))
+        } finally { db.delete("events","payload=?",arrayOf(payload)); db.close(); p.edit().putBoolean("trialEvidence",previous).commit() }
+    }
 }

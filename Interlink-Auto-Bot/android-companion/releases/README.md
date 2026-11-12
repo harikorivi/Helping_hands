@@ -1,4 +1,20 @@
-# Interlink Scheduler 2.0-rc2 — guarded task-removal recovery
+# Interlink Scheduler 2.0-rc3 — six alarm clocks, bounded executions
+
+[Download Interlink-Scheduler-2.0-rc3.apk](Interlink-Scheduler-2.0-rc3.apk). Version code 18; same package and signing identity. Install over the existing app without uninstalling. Pause the old schedule and let any active execution finish first. Stored credentials and the Node claim ledger are preserved; no new login is needed when token refresh works.
+
+rc3 replaces continuous scheduling with six user-visible `setAlarmClock()` registrations. The service, foreground notification and timed CPU wake lock exist only during each original execution window. Separate receiver/service/Node timestamps, attempt IDs, service IDs, source/importer PIDs, original deadlines and process-exit metadata support the trial. Actual receiver delivery is measured; no Funtouch exact-second or force-stop immunity claim is made.
+
+After updating, verify native Scheduler/Termux power access, notifications and **Exact-alarm capability**. Tap **Enable / repair six alarms** and confirm **Accepted registrations: 6/6**. **Execution service: idle** and **wake lock: false** are expected between sessions. Use **2-minute alarm-clock test — no claim** for setup and the 10-minute test for longer idle checks; probes start/stop a bounded service without launching Node or claims.
+
+Keep **48-hour trial evidence** enabled: structured diagnostics retain three local dates/6,000 rows so a 48-hour trial can span three dates. Existing Termux daily-log cleanup remains today/yesterday. Optional vivo/iQOO shortcuts only navigate to settings, with App Info fallback; no accessibility, notification-listener or overlay permissions are used.
+
+[First-time installation and existing-user notes](../../README-mobile.md) · [Architecture](../../docs/ADR-ALARM-CLOCK-RC3.md) · [Executed validation](VALIDATION-2.0-rc3.md) · [48-hour acceptance checklist](../../docs/RC3-ACCEPTANCE.md).
+
+SHA-256: `1d8512abffb188caf52b503cba3449834df0cd30ffad71e1da3959cd275c8c72`.
+
+---
+
+## Previous 2.0-rc2 — guarded task-removal recovery
 
 [Download Interlink-Scheduler-2.0-rc2.apk](Interlink-Scheduler-2.0-rc2.apk). Version code 17, same package/signing identity. Install over the existing app without uninstalling. Node source from 1.8-rc2 or newer already has the required protocol; no new login is required when stored refresh credentials work.
 

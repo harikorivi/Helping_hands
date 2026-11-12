@@ -1,5 +1,10 @@
 # Android architecture and validation
 
+**Current decision: 2.0-rc3 uses six user-visible alarm-clock registrations and bounded dataSync executions.** The OS owns waiting between slots; no continuous service or wake lock remains. [Current ADR](docs/ADR-ALARM-CLOCK-RC3.md) · [Installation](README-mobile.md) · [48-hour acceptance](docs/RC3-ACCEPTANCE.md) · [Local validation](android-companion/releases/VALIDATION-2.0-rc3.md).
+
+The remainder is historical design/evidence. Earlier continuous-service and exact-alarm recommendations do not override the rc3 decision.
+
+
 **2026-11-07 senior architecture decision review:** [Android reliability and execution boundary](docs/ADR-ANDROID-RELIABILITY-REVIEW.md). It qualifies the off-phone recommendation and identifies application-owned startup risks. No off-phone migration has been selected.
 
 **Latest review:** [1.7-rc1 reliability audit](docs/RELIABILITY-AUDIT.md), [changes](docs/RELIABILITY-CHANGELOG.md), and [validation gate](docs/RELIABILITY-VALIDATION.md) supersede the initial review below where they differ. Physical long-idle reliability remains unverified.

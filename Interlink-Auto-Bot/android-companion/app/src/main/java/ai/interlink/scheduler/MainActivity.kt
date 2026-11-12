@@ -45,12 +45,19 @@ class MainActivity:Activity() {
                 insets
             }
         })
-        text("Interlink Scheduler 2.0-rc2",25f)
-        text("Continuous background service",20f)
-        text("Runs daily at 1:26, 5:26, 9:26 AM and PM in this phone’s timezone. Each run checks two separate claim windows. Keep the service notification visible; Node runs only during an execution.")
+        text("Interlink Scheduler 2.0-rc3",25f)
+        text("Six user-visible alarm clocks",20f)
+        text("Runs daily at 1:26, 5:26, 9:26 AM and PM in this phone’s timezone. Each run checks two separate claim windows. Android owns the alarms between runs. A service and wake lock exist only during a bounded execution; Node exits afterward.")
         status=text("Loading service status…")
-        button("Start / repair 24-hour scheduling") {
-            if(ready()) { Schedule.enable(this); refreshStatus() }
+        button("Enable / repair six alarms") {
+            if(ready()) {
+                if(!Schedule.allowed(this)) { SetupAccess.exact(this); return@button }
+                val enable={ safely { Schedule.enable(this); refreshStatus() } }
+                if(!getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName))
+                    AlertDialog.Builder(this).setMessage("Native Scheduler battery exemption is missing. Request it using Setup for the unattended trial. Alarm scheduling can still be enabled, but execution remains subject to power restrictions.")
+                        .setPositiveButton("Enable with warning") { _,_ -> enable() }.setNegativeButton("Cancel",null).show()
+                else enable()
+            }
         }
         button("Pause scheduled runs") {
             AlertDialog.Builder(this).setMessage("Pause future runs? An active Termux execution may finish within its original deadline.")
@@ -62,11 +69,11 @@ class MainActivity:Activity() {
             AlertDialog.Builder(this).setMessage("Submit one real claim only if the server reports eligibility? This does not replace either scheduled claim window.")
                 .setPositiveButton("Submit eligible claim") { _,_ -> manual("claim") }.setNegativeButton("Cancel",null).show()
         }
-        text("Test service survival",20f)
-        text("Start scheduling first. Choose a test, swipe this app from Recents, and lock the screen. The service should record its timer event without reopening the app. These timers make no API requests or claims; normal scheduled runs remain enabled.")
-        for(minutes in listOf(2,10)) button("$minutes-minute service timer test — no claim") {
-            if(!Schedule.enabled(this)) notice("Start 24-hour scheduling first.")
-            else safely { RunService.probe(this,minutes*60000L); Toast.makeText(this,"Timer requested. You can close this screen and lock the phone.",Toast.LENGTH_LONG).show() }
+        text("Test alarm delivery",20f)
+        text("Choose an alarm test, then leave the phone locked and untouched. Android should deliver the alarm and start/stop a bounded test service. These user-visible probes launch no Node or API claims. Normal scheduled alarms remain enabled.")
+        for(minutes in listOf(2,10)) button("$minutes-minute alarm-clock test — no claim") {
+            if(!Schedule.allowed(this)) SetupAccess.exact(this)
+            else safely { Schedule.probe(this,minutes*60000L); Toast.makeText(this,"Alarm test scheduled. Lock the phone and leave it untouched.",Toast.LENGTH_LONG).show() }
         }
         button("Send this screen to background") { moveTaskToBack(true) }
         text("Setup",20f)
@@ -75,6 +82,11 @@ class MainActivity:Activity() {
             if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),102)
             else launch(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,packageName))
+        }
+        button("Alarms & reminders access") { if(Build.VERSION.SDK_INT<31) notice("This Android version does not require special exact-alarm access.") else SetupAccess.exact(this) }
+        if(SetupAccess.vivo()) {
+            button("vivo / iQOO Autostart shortcut") { SetupAccess.oem(this,"autostart") }
+            button("vivo / iQOO Background Power shortcut") { SetupAccess.oem(this,"background_power") }
         }
         button("Scheduler app / battery settings") { appSettings(packageName) }
         button("Termux app / battery settings") { appSettings("com.termux") }
@@ -90,8 +102,13 @@ class MainActivity:Activity() {
             }
         }
         button("Open battery optimization list") { launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-        text("Allow background power use for both Interlink Scheduler and Termux. Exact-alarm access is not used in this version. A continuous CPU wake lock increases battery use. Android/OEM force-stop can still terminate the service; no app can promise recovery from that state.")
+        text("Allow background power use for both Interlink Scheduler and Termux. Exact-alarm capability is required. User-visible alarms can appear in Android’s next-alarm display. No service or wake lock stays active between runs. OEM shortcuts only open settings; their permissions cannot be verified by this app. Android/OEM force-stop can still terminate the service; no app can promise recovery from that state.")
         text("Diagnostics",20f)
+        body.addView(Switch(this).apply {
+            text="48-hour trial evidence — retain three local days"
+            isChecked=Diagnostics.trialEvidence(this@MainActivity)
+            setOnCheckedChangeListener { _,on -> Schedule.prefs(this@MainActivity).edit().putBoolean("trialEvidence",on).apply(); Diagnostics.emit(this@MainActivity,"TRIAL_RETENTION_CHANGED",reason=on.toString()) }
+        })
         body.addView(Switch(this).apply {
             text="Live screen, unlock and power-state logging"
             isChecked=Diagnostics.liveDebug(this@MainActivity)
@@ -124,16 +141,16 @@ class MainActivity:Activity() {
         Diagnostics.work {
             val p=Schedule.prefs(this)
             val enabled=Schedule.enabled(this)
-            val next=p.getLong("next",0); val heartbeat=p.getLong("serviceHeartbeat",0)
+            val next=p.getLong("next",0)
             val power=getSystemService(PowerManager::class.java)
-            val state="Schedule: ${if(enabled) "enabled" else "paused"}\nService: ${if(RunService.running) "running" else "not running"}; CPU wake lock: ${RunService.wakeHeld}\n"+
-                "Last heartbeat: ${if(heartbeat>0) Schedule.time(heartbeat) else "none"}\nNext: ${if(next>0) Schedule.time(next) else "none"}\n"+
+            val state="Schedule requested: ${if(enabled) "enabled" else "paused"}\nAccepted registrations: ${ExecutionPolicy.hours.count { p.getBoolean("armed:$it",false) }}/6\nExecution service: ${if(RunService.running) "running" else "idle (expected between runs)"}; wake lock: ${RunService.wakeHeld}\n"+
+                "Exact-alarm capability: ${Schedule.allowed(this)}\nNext registered: ${if(next>0) Schedule.time(next) else "none"}\n"+
                 "Android battery exemptions: Scheduler=${power.isIgnoringBatteryOptimizations(packageName)}, Termux=${power.isIgnoringBatteryOptimizations("com.termux")}\nBattery saver: ${power.isPowerSaveMode}\n"+
                 (if(!power.isIgnoringBatteryOptimizations(packageName)) "Android exemption is missing. Use Request Scheduler battery exemption below.\n" else "")+
-                (if(power.isPowerSaveMode) "Battery Saver is ON. Turn it off for the continuous-service timing test.\n" else "")+
-                p.getString("serviceError","").orEmpty()+"\n"+p.getString("manualResult","").orEmpty()+"\n"+p.getString("probeStatus","").orEmpty()
+                (if(power.isPowerSaveMode) "Battery Saver is ON. Turn it off for the alarm delivery timing test.\n" else "")+
+                p.getString("alarmError","").orEmpty()+"\n"+p.getString("manualResult","").orEmpty()+"\n"+p.getString("probeStatus","").orEmpty()
             val recent=LogRetention.retain(p.getString("events","").orEmpty()).reversed().joinToString("\n\n")
-            val details=ExecutionPolicy.hours.joinToString("\n") { h -> val at=p.getLong("slot:$h",0); "Hour $h: ${if(at>0) Schedule.time(at) else "not planned"}" }+
+            val details=ExecutionPolicy.hours.joinToString("\n") { h -> val at=p.getLong("slot:$h",0); "Hour $h: ${if(at>0) Schedule.time(at) else "not planned"}; registration accepted: ${p.getBoolean("armed:$h",false)}" }+
                 "\n\n"+Diagnostics.dashboard(this)+"\n\nRecent activity — today and yesterday:\n"+recent
             runOnUiThread { if(!isDestroyed && current==generation) { status.text=state; evidence.text=details } }
         }
